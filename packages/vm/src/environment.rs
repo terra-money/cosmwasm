@@ -681,15 +681,6 @@ mod tests {
         env.call_function0("interface_version_8", &[]).unwrap();
     }
 
-
-    #[test]
-    fn call_function0_works_with_legacy_version() {
-        let (env, _instance) = make_instance(TESTING_GAS_LIMIT);
-        leave_default_data(&env);
-
-        env.call_function0("interface_version_7", &[]).unwrap();
-    }
-
     #[test]
     fn call_function0_errors_for_wrong_result_count() {
         let (env, _instance) = make_instance(TESTING_GAS_LIMIT);
