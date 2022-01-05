@@ -41,9 +41,7 @@ const REQUIRED_EXPORTS: &[&str] = &[
 ];
 
 const INTERFACE_VERSION_PREFIX: &str = "interface_version_";
-/// Only one version is supported right now. This could potentially turn into a list
-/// later, but maybe this never happens and new functionality is only added via features.
-const SUPPORTED_INTERFACE_VERSION: &str = "interface_version_8";
+const SUPPORTED_INTERFACE_VERSIONS: [&str; 2] = ["interface_version_8", "interface_version_7"];
 
 const MEMORY_LIMIT: u32 = 512; // in pages
 
@@ -105,10 +103,12 @@ fn check_interface_version(module: &Module) -> VmResult<()> {
             ))
         } else {
             // Exactly one interface version found
-
-            match first_interface_version_export.as_str() {
-                // Ok
-                SUPPORTED_INTERFACE_VERSION => Ok(()),
+            let version_str = first_interface_version_export.as_str();
+            match version_str {
+                _ if SUPPORTED_INTERFACE_VERSIONS
+                .iter()
+                .find(|&&v| v == version_str)
+                .is_some() => Ok(()),
                 // Well known old versions for better error messages
                 "interface_version_6" => Err(VmError::static_validation_err(
                     "Wasm contract has incompatible CosmWasm 0.15 marker export interface_version_6 (see https://github.com/CosmWasm/cosmwasm/blob/main/packages/vm/README.md)"
@@ -352,6 +352,22 @@ mod tests {
                 (export "deallocate" (func 0))
                 (export "instantiate" (func 0))
             )"#,
+        )
+        .unwrap();
+        let module = deserialize_wasm(&wasm).unwrap();
+        check_interface_version(&module).unwrap();
+
+        // valid legacy version
+        let wasm = wat::parse_str(
+            r#"(module
+                        (type (func))
+                        (func (type 0) nop)
+                        (export "add_one" (func 0))
+                        (export "allocate" (func 0))
+                        (export "interface_version_7" (func 0))
+                        (export "deallocate" (func 0))
+                        (export "instantiate" (func 0))
+                    )"#,
         )
         .unwrap();
         let module = deserialize_wasm(&wasm).unwrap();

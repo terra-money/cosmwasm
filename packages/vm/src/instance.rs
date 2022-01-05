@@ -489,6 +489,15 @@ mod tests {
     }
 
     #[test]
+    fn call_function0_works_with_legacy_version() {
+        let instance = mock_instance(CONTRACT, &[]);
+
+        instance
+            .call_function0("interface_version_7", &[])
+            .expect("error calling function");
+    }
+
+    #[test]
     fn call_function1_works() {
         let instance = mock_instance(CONTRACT, &[]);
 
