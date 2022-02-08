@@ -90,12 +90,65 @@ impl InMemoryCache {
     }
 }
 
+use crate::wasm_backend::compile;
+use std::thread;
+use std::thread::JoinHandle;
+use wasmer::{imports, Instance as WasmerInstance};
+use wasmer_middlewares::metering::set_remaining_points;
+const WASM_SIZE_FACTOR: usize = 18;
+const TESTING_GAS_LIMIT: u64 = 5_000;
+pub fn in_memory_program() {
+    let mut handles: Vec<JoinHandle<()>> = vec![];
+    for _ in 1..10000 {
+        let handle = thread::spawn(move || {
+            let mut cache = InMemoryCache::new(Size::mebi(1));
+            // Create module
+            let wasm = wat::parse_str(
+                r#"(module
+        (type $t0 (func (param i32) (result i32)))
+        (func $add_one (export "add_one") (type $t0) (param $p0 i32) (result i32)
+            get_local $p0
+            i32.const 1
+            i32.add)
+        )"#,
+            )
+            .unwrap();
+            let checksum = Checksum::generate(&wasm);
+            // Module does not exist
+            let cache_entry = cache.load(&checksum).unwrap();
+            assert!(cache_entry.is_none());
+
+            // Compile module
+            let original = compile(&wasm, None).unwrap();
+
+            // Store module
+            let size = wasm.len() * WASM_SIZE_FACTOR;
+            cache.store(&checksum, original, size).unwrap();
+            let cached = cache.load(&checksum).unwrap().unwrap();
+
+            let instance = WasmerInstance::new(&cached.module, &imports! {}).unwrap();
+            set_remaining_points(&instance, TESTING_GAS_LIMIT);
+            let add_one = instance.exports.get_function("add_one").unwrap();
+            let result = add_one.call(&[42.into()]).unwrap();
+            assert_eq!(result[0].unwrap_i32(), 43);
+        });
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::size::Size;
     use crate::wasm_backend::compile;
     use std::mem;
+    use std::thread;
+    use std::thread::JoinHandle;
     use wasmer::{imports, Instance as WasmerInstance};
     use wasmer_middlewares::metering::set_remaining_points;
 
@@ -122,51 +175,46 @@ mod tests {
 
     #[test]
     fn in_memory_cache_run() {
-        let mut cache = InMemoryCache::new(Size::mebi(200));
+        let mut handles: Vec<JoinHandle<()>> = vec![];
+        for _ in 1..10000 {
+            let handle = thread::spawn(move || {
+                let mut cache = InMemoryCache::new(Size::mebi(1));
+                // Create module
+                let wasm = wat::parse_str(
+                    r#"(module
+        (type $t0 (func (param i32) (result i32)))
+        (func $add_one (export "add_one") (type $t0) (param $p0 i32) (result i32)
+            get_local $p0
+            i32.const 1
+            i32.add)
+        )"#,
+                )
+                .unwrap();
+                let checksum = Checksum::generate(&wasm);
+                // Module does not exist
+                let cache_entry = cache.load(&checksum).unwrap();
+                assert!(cache_entry.is_none());
 
-        // Create module
-        let wasm = wat::parse_str(
-            r#"(module
-            (type $t0 (func (param i32) (result i32)))
-            (func $add_one (export "add_one") (type $t0) (param $p0 i32) (result i32)
-                get_local $p0
-                i32.const 1
-                i32.add)
-            )"#,
-        )
-        .unwrap();
-        let checksum = Checksum::generate(&wasm);
+                // Compile module
+                let original = compile(&wasm, None).unwrap();
 
-        // Module does not exist
-        let cache_entry = cache.load(&checksum).unwrap();
-        assert!(cache_entry.is_none());
+                // Store module
+                let size = wasm.len() * TESTING_WASM_SIZE_FACTOR;
+                cache.store(&checksum, original, size).unwrap();
+                let cached = cache.load(&checksum).unwrap().unwrap();
 
-        // Compile module
-        let original = compile(&wasm, None).unwrap();
+                let instance = WasmerInstance::new(&cached.module, &imports! {}).unwrap();
+                set_remaining_points(&instance, TESTING_GAS_LIMIT);
+                let add_one = instance.exports.get_function("add_one").unwrap();
+                let result = add_one.call(&[42.into()]).unwrap();
+                assert_eq!(result[0].unwrap_i32(), 43);
+            });
 
-        // Ensure original module can be executed
-        {
-            let instance = WasmerInstance::new(&original, &imports! {}).unwrap();
-            set_remaining_points(&instance, TESTING_GAS_LIMIT);
-            let add_one = instance.exports.get_function("add_one").unwrap();
-            let result = add_one.call(&[42.into()]).unwrap();
-            assert_eq!(result[0].unwrap_i32(), 43);
+            handles.push(handle);
         }
 
-        // Store module
-        let size = wasm.len() * TESTING_WASM_SIZE_FACTOR;
-        cache.store(&checksum, original, size).unwrap();
-
-        // Load module
-        let cached = cache.load(&checksum).unwrap().unwrap();
-
-        // Ensure cached module can be executed
-        {
-            let instance = WasmerInstance::new(&cached.module, &imports! {}).unwrap();
-            set_remaining_points(&instance, TESTING_GAS_LIMIT);
-            let add_one = instance.exports.get_function("add_one").unwrap();
-            let result = add_one.call(&[42.into()]).unwrap();
-            assert_eq!(result[0].unwrap_i32(), 43);
+        for handle in handles {
+            handle.join().unwrap();
         }
     }
 
