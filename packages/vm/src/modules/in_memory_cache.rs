@@ -52,7 +52,14 @@ impl InMemoryCache {
     pub fn store(&mut self, checksum: &Checksum, module: Module, size: usize) -> VmResult<()> {
         if let Some(modules) = &mut self.modules {
             modules
-                .put_with_weight(*checksum, SizedModule { module, size })
+                .put_with_weight(
+                    *checksum,
+                    SizedModule {
+                        module,
+                        size,
+                        hits: 0,
+                    },
+                )
                 .map_err(|e| VmError::cache_err(format!("{:?}", e)))?;
         }
         Ok(())
@@ -62,7 +69,19 @@ impl InMemoryCache {
     pub fn load(&mut self, checksum: &Checksum) -> VmResult<Option<SizedModule>> {
         if let Some(modules) = &mut self.modules {
             match modules.get(checksum) {
-                Some(module) => Ok(Some(module.clone())),
+                Some(module) => {
+                    let mut module = module.clone();
+                    module.hits += 1;
+                    if module.hits == 100 {
+                        let _ = modules.pop(checksum);
+                    } else {
+                        let _ = modules
+                            .put_with_weight(*checksum, module.clone())
+                            .map_err(|e| VmError::cache_err(format!("{:?}", e)))?;
+                    }
+
+                    Ok(Some(module))
+                }
                 None => Ok(None),
             }
         } else {

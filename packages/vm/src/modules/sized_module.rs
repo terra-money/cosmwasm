@@ -4,4 +4,5 @@ use wasmer::Module;
 pub struct SizedModule {
     pub module: Module,
     pub size: usize,
+    pub hits: u32,
 }

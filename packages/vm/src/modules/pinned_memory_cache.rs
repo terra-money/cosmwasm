@@ -18,7 +18,7 @@ impl PinnedMemoryCache {
     }
 
     pub fn store(&mut self, checksum: &Checksum, module: Module, size: usize) -> VmResult<()> {
-        self.modules.insert(*checksum, SizedModule { module, size });
+        self.modules.insert(*checksum, SizedModule { module, size, hits: 0u32 });
         Ok(())
     }
 
