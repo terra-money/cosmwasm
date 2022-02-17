@@ -72,7 +72,7 @@ impl InMemoryCache {
                 Some(module) => {
                     let mut module = module.clone();
                     module.hits += 1;
-                    if module.hits == 100 {
+                    if module.hits == 10 {
                         let _ = modules.pop(checksum);
                     } else {
                         let _ = modules
