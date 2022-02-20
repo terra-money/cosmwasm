@@ -205,15 +205,16 @@ where
         }
 
         // Try to get module from the memory cache
-        if let Some(module) = cache.memory_cache.load(checksum)? {
+        let store = make_runtime_store(Some(cache.instance_memory_limit));
+        if let Some(module) = cache.memory_cache.load(checksum, &store)? {
             cache.stats.hits_memory_cache += 1;
+            let module_size = loupe::size_of_val(&module);
             return cache
                 .pinned_memory_cache
-                .store(checksum, module.module, module.size);
+                .store(checksum, module, module_size);
         }
 
         // Try to get module from file system cache
-        let store = make_runtime_store(Some(cache.instance_memory_limit));
         if let Some(module) = cache.fs_cache.load(checksum, &store)? {
             cache.stats.hits_fs_cache += 1;
             let module_size = loupe::size_of_val(&module);
@@ -254,8 +255,10 @@ where
         options: InstanceOptions,
     ) -> VmResult<Instance<A, S, Q>> {
         let mut cache = self.inner.lock().unwrap();
+        let store = make_runtime_store(Some(cache.instance_memory_limit));
+
         // Try to get module from the pinned memory cache
-        if let Some(module) = cache.pinned_memory_cache.load(checksum)? {
+        if let Some(module) = cache.pinned_memory_cache.load(checksum, &store)? {
             cache.stats.hits_pinned_memory_cache += 1;
             let instance =
                 Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
@@ -263,19 +266,14 @@ where
         }
 
         // Get module from memory cache
-        if let Some(module) = cache.memory_cache.load(checksum)? {
+        if let Some(module) = cache.memory_cache.load(checksum, &store)? {
             cache.stats.hits_memory_cache += 1;
-            let instance = Instance::from_module(
-                &module.module,
-                backend,
-                options.gas_limit,
-                options.print_debug,
-            )?;
+            let instance =
+                Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
             return Ok(instance);
         }
 
         // Get module from file system cache
-        let store = make_runtime_store(Some(cache.instance_memory_limit));
         if let Some(module) = cache.fs_cache.load(checksum, &store)? {
             cache.stats.hits_fs_cache += 1;
             let instance =

@@ -1,9 +1,9 @@
 use clru::{CLruCache, CLruCacheConfig, WeightScale};
 use std::collections::hash_map::RandomState;
 use std::num::NonZeroUsize;
-use wasmer::Module;
+use wasmer::{Module, Store};
 
-use super::sized_module::SizedModule;
+use super::sized_artifact::SizedArtifact;
 use crate::{Checksum, Size, VmError, VmResult};
 
 // Minimum module size.
@@ -18,16 +18,16 @@ const MINIMUM_MODULE_SIZE: Size = Size::kibi(250);
 #[derive(Debug)]
 struct SizeScale;
 
-impl WeightScale<Checksum, SizedModule> for SizeScale {
+impl WeightScale<Checksum, SizedArtifact> for SizeScale {
     #[inline]
-    fn weight(&self, _key: &Checksum, value: &SizedModule) -> usize {
+    fn weight(&self, _key: &Checksum, value: &SizedArtifact) -> usize {
         value.size
     }
 }
 
 /// An in-memory module cache
 pub struct InMemoryCache {
-    modules: Option<CLruCache<Checksum, SizedModule, RandomState, SizeScale>>,
+    artifacts: Option<CLruCache<Checksum, SizedArtifact, RandomState, SizeScale>>,
 }
 
 impl InMemoryCache {
@@ -37,7 +37,7 @@ impl InMemoryCache {
         let preallocated_entries = size.0 / MINIMUM_MODULE_SIZE.0;
 
         InMemoryCache {
-            modules: if size.0 > 0 {
+            artifacts: if size.0 > 0 {
                 Some(CLruCache::with_config(
                     CLruCacheConfig::new(NonZeroUsize::new(size.0).unwrap())
                         .with_memory(preallocated_entries)
@@ -50,19 +50,27 @@ impl InMemoryCache {
     }
 
     pub fn store(&mut self, checksum: &Checksum, module: Module, size: usize) -> VmResult<()> {
-        if let Some(modules) = &mut self.modules {
-            modules
-                .put_with_weight(*checksum, SizedModule { module, size })
+        if let Some(artifacts) = &mut self.artifacts {
+            artifacts
+                .put_with_weight(
+                    *checksum,
+                    SizedArtifact {
+                        artifact: module.serialize()?,
+                        size,
+                    },
+                )
                 .map_err(|e| VmError::cache_err(format!("{:?}", e)))?;
         }
         Ok(())
     }
 
     /// Looks up a module in the cache and creates a new module
-    pub fn load(&mut self, checksum: &Checksum) -> VmResult<Option<SizedModule>> {
-        if let Some(modules) = &mut self.modules {
-            match modules.get(checksum) {
-                Some(module) => Ok(Some(module.clone())),
+    pub fn load(&mut self, checksum: &Checksum, store: &Store) -> VmResult<Option<Module>> {
+        if let Some(artifacts) = &mut self.artifacts {
+            match artifacts.get(checksum) {
+                Some(sized_artifact) => Ok(Some(unsafe {
+                    Module::deserialize(store, &sized_artifact.artifact)
+                }?)),
                 None => Ok(None),
             }
         } else {
@@ -72,9 +80,9 @@ impl InMemoryCache {
 
     /// Returns the number of elements in the cache.
     pub fn len(&self) -> usize {
-        self.modules
+        self.artifacts
             .as_ref()
-            .map(|modules| modules.len())
+            .map(|artifacts| artifacts.len())
             .unwrap_or_default()
     }
 
@@ -83,9 +91,9 @@ impl InMemoryCache {
     /// This is based on the values provided with `store`. No actual
     /// memory size is measured here.
     pub fn size(&self) -> usize {
-        self.modules
+        self.artifacts
             .as_ref()
-            .map(|modules| modules.weight())
+            .map(|artifacts| artifacts.weight())
             .unwrap_or_default()
     }
 }
@@ -94,11 +102,12 @@ impl InMemoryCache {
 mod tests {
     use super::*;
     use crate::size::Size;
-    use crate::wasm_backend::compile;
+    use crate::wasm_backend::{compile, make_runtime_store};
     use std::mem;
     use wasmer::{imports, Instance as WasmerInstance};
     use wasmer_middlewares::metering::set_remaining_points;
 
+    const TESTING_MEMORY_LIMIT: Option<Size> = Some(Size::mebi(16));
     const TESTING_GAS_LIMIT: u64 = 5_000;
     // Based on `examples/module_size.sh`
     const TESTING_WASM_SIZE_FACTOR: usize = 18;
@@ -138,7 +147,8 @@ mod tests {
         let checksum = Checksum::generate(&wasm);
 
         // Module does not exist
-        let cache_entry = cache.load(&checksum).unwrap();
+        let store = make_runtime_store(TESTING_MEMORY_LIMIT);
+        let cache_entry = cache.load(&checksum, &store).unwrap();
         assert!(cache_entry.is_none());
 
         // Compile module
@@ -158,11 +168,12 @@ mod tests {
         cache.store(&checksum, original, size).unwrap();
 
         // Load module
-        let cached = cache.load(&checksum).unwrap().unwrap();
+        let store = make_runtime_store(TESTING_MEMORY_LIMIT);
+        let cached = cache.load(&checksum, &store).unwrap().unwrap();
 
         // Ensure cached module can be executed
         {
-            let instance = WasmerInstance::new(&cached.module, &imports! {}).unwrap();
+            let instance = WasmerInstance::new(&cached, &imports! {}).unwrap();
             set_remaining_points(&instance, TESTING_GAS_LIMIT);
             let add_one = instance.exports.get_function("add_one").unwrap();
             let result = add_one.call(&[42.into()]).unwrap();

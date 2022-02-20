@@ -1,50 +1,58 @@
 use std::collections::HashMap;
-use wasmer::Module;
+use wasmer::{Module, Store};
 
-use super::sized_module::SizedModule;
+use super::sized_artifact::SizedArtifact;
 use crate::{Checksum, VmResult};
 
 /// An pinned in memory module cache
 pub struct PinnedMemoryCache {
-    modules: HashMap<Checksum, SizedModule>,
+    artifacts: HashMap<Checksum, SizedArtifact>,
 }
 
 impl PinnedMemoryCache {
     /// Creates a new cache
     pub fn new() -> Self {
         PinnedMemoryCache {
-            modules: HashMap::new(),
+            artifacts: HashMap::new(),
         }
     }
 
     pub fn store(&mut self, checksum: &Checksum, module: Module, size: usize) -> VmResult<()> {
-        self.modules.insert(*checksum, SizedModule { module, size });
+        self.artifacts.insert(
+            *checksum,
+            SizedArtifact {
+                artifact: module.serialize()?,
+                size,
+            },
+        );
         Ok(())
     }
 
     /// Removes a module from the cache
-    /// Not found modules are silently ignored. Potential integrity errors (wrong checksum) are not checked / enforced
+    /// Not found artifacts are silently ignored. Potential integrity errors (wrong checksum) are not checked / enforced
     pub fn remove(&mut self, checksum: &Checksum) -> VmResult<()> {
-        self.modules.remove(checksum);
+        self.artifacts.remove(checksum);
         Ok(())
     }
 
     /// Looks up a module in the cache and creates a new module
-    pub fn load(&mut self, checksum: &Checksum) -> VmResult<Option<Module>> {
-        match self.modules.get(checksum) {
-            Some(module) => Ok(Some(module.module.clone())),
+    pub fn load(&mut self, checksum: &Checksum, store: &Store) -> VmResult<Option<Module>> {
+        match self.artifacts.get(checksum) {
+            Some(sized_artifact) => Ok(Some(unsafe {
+                Module::deserialize(store, &sized_artifact.artifact)
+            }?)),
             None => Ok(None),
         }
     }
 
     /// Returns true if and only if this cache has an entry identified by the given checksum
     pub fn has(&self, checksum: &Checksum) -> bool {
-        self.modules.contains_key(checksum)
+        self.artifacts.contains_key(checksum)
     }
 
     /// Returns the number of elements in the cache.
     pub fn len(&self) -> usize {
-        self.modules.len()
+        self.artifacts.len()
     }
 
     /// Returns cumulative size of all elements in the cache.
@@ -52,17 +60,19 @@ impl PinnedMemoryCache {
     /// This is based on the values provided with `store`. No actual
     /// memory size is measured here.
     pub fn size(&self) -> usize {
-        self.modules.iter().map(|(_, module)| module.size).sum()
+        self.artifacts.iter().map(|(_, module)| module.size).sum()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wasm_backend::compile;
+    use crate::wasm_backend::{compile, make_runtime_store};
+    use crate::Size;
     use wasmer::{imports, Instance as WasmerInstance};
     use wasmer_middlewares::metering::set_remaining_points;
 
+    const TESTING_MEMORY_LIMIT: Option<Size> = Some(Size::mebi(16));
     const TESTING_GAS_LIMIT: u64 = 5_000;
 
     #[test]
@@ -83,7 +93,8 @@ mod tests {
         let checksum = Checksum::generate(&wasm);
 
         // Module does not exist
-        let cache_entry = cache.load(&checksum).unwrap();
+        let store = make_runtime_store(TESTING_MEMORY_LIMIT);
+        let cache_entry = cache.load(&checksum, &store).unwrap();
         assert!(cache_entry.is_none());
 
         // Compile module
@@ -102,7 +113,7 @@ mod tests {
         cache.store(&checksum, original, 0).unwrap();
 
         // Load module
-        let cached = cache.load(&checksum).unwrap().unwrap();
+        let cached = cache.load(&checksum, &store).unwrap().unwrap();
 
         // Ensure cached module can be executed
         {

@@ -50,8 +50,8 @@ wasmer-middlewares = "2.0.0"
 loupe = "0.1.3"
 
 # Wasmer git/local (used for quick local debugging or patching)
-# wasmer = { git = "https://github.com/wasmerio/wasmer", rev = "1.0.2", default-features = false, features = ["jit", "singlepass"] }
-# wasmer-middlewares = { git = "https://github.com/wasmerio/wasmer", rev = "1.0.2" }
+# wasmer = { git = "https://github.com/terra-money/wasmer", rev = "7ba30a2545", default-features = false, features = ["jit", "singlepass"] }
+# wasmer-middlewares = { git = "https://github.com/terra-money/wasmer", rev = "7ba30a2545" }
 # wasmer = { path = "../../../wasmer/lib/api", default-features = false, features = ["jit", "singlepass"] }
 # wasmer-middlewares = { path = "../../../wasmer/lib/middlewares" }
 
