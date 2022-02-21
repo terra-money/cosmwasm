@@ -205,22 +205,20 @@ where
         }
 
         // Try to get module from the memory cache
-        let store = make_runtime_store(Some(cache.instance_memory_limit));
-        if let Some(module) = cache.memory_cache.load(checksum, &store)? {
+        let instance_memory_limit = cache.instance_memory_limit;
+        if let Some(module) = cache
+            .memory_cache
+            .load(checksum, Some(instance_memory_limit))?
+        {
             cache.stats.hits_memory_cache += 1;
-            let module_size = loupe::size_of_val(&module);
-            return cache
-                .pinned_memory_cache
-                .store(checksum, module, module_size);
+            return cache.pinned_memory_cache.store(checksum, module);
         }
 
         // Try to get module from file system cache
+        let store = make_runtime_store(Some(cache.instance_memory_limit));
         if let Some(module) = cache.fs_cache.load(checksum, &store)? {
             cache.stats.hits_fs_cache += 1;
-            let module_size = loupe::size_of_val(&module);
-            return cache
-                .pinned_memory_cache
-                .store(checksum, module, module_size);
+            return cache.pinned_memory_cache.store(checksum, module);
         }
 
         // Re-compile from original Wasm bytecode
@@ -228,10 +226,7 @@ where
         let module = compile(&code, Some(cache.instance_memory_limit))?;
         // Store into the fs cache too
         cache.fs_cache.store(checksum, &module)?;
-        let module_size = loupe::size_of_val(&module);
-        cache
-            .pinned_memory_cache
-            .store(checksum, module, module_size)
+        cache.pinned_memory_cache.store(checksum, module)
     }
 
     /// Unpins a Module, i.e. removes it from the pinned memory cache.
@@ -255,10 +250,13 @@ where
         options: InstanceOptions,
     ) -> VmResult<Instance<A, S, Q>> {
         let mut cache = self.inner.lock().unwrap();
-        let store = make_runtime_store(Some(cache.instance_memory_limit));
+        let instance_memory_limit = cache.instance_memory_limit;
 
         // Try to get module from the pinned memory cache
-        if let Some(module) = cache.pinned_memory_cache.load(checksum, &store)? {
+        if let Some(module) = cache
+            .pinned_memory_cache
+            .load(checksum, Some(instance_memory_limit))?
+        {
             cache.stats.hits_pinned_memory_cache += 1;
             let instance =
                 Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
@@ -266,7 +264,10 @@ where
         }
 
         // Get module from memory cache
-        if let Some(module) = cache.memory_cache.load(checksum, &store)? {
+        if let Some(module) = cache
+            .memory_cache
+            .load(checksum, Some(instance_memory_limit))?
+        {
             cache.stats.hits_memory_cache += 1;
             let instance =
                 Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
@@ -274,12 +275,12 @@ where
         }
 
         // Get module from file system cache
+        let store = make_runtime_store(Some(cache.instance_memory_limit));
         if let Some(module) = cache.fs_cache.load(checksum, &store)? {
             cache.stats.hits_fs_cache += 1;
             let instance =
                 Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
-            let module_size = loupe::size_of_val(&module);
-            cache.memory_cache.store(checksum, module, module_size)?;
+            cache.memory_cache.store(checksum, module)?;
             return Ok(instance);
         }
 
@@ -294,8 +295,7 @@ where
         let instance =
             Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
         cache.fs_cache.store(checksum, &module)?;
-        let module_size = loupe::size_of_val(&module);
-        cache.memory_cache.store(checksum, module, module_size)?;
+        cache.memory_cache.store(checksum, module)?;
         Ok(instance)
     }
 }
