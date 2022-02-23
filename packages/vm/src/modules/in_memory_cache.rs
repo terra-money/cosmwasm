@@ -96,8 +96,10 @@ impl InMemoryCache {
 
                             // hold lock to replace shared module
                             let mut shared_module = shared_module.lock().unwrap();
-                            (*shared_module).refreshing = false;
-                            (*shared_module).module = module;
+                            (*shared_module) = SharedModule {
+                                refreshing: false,
+                                module,
+                            };
                         });
                     }
 
