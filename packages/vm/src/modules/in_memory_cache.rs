@@ -1,9 +1,12 @@
 use clru::{CLruCache, CLruCacheConfig, WeightScale};
 use std::collections::hash_map::RandomState;
 use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use wasmer::Module;
 
-use super::sized_module::SizedModule;
+use super::sized_artifact::{SharedModule, SizedArtifact};
+use crate::wasm_backend::make_runtime_store;
 use crate::{Checksum, Size, VmError, VmResult};
 
 // Minimum module size.
@@ -18,16 +21,16 @@ const MINIMUM_MODULE_SIZE: Size = Size::kibi(250);
 #[derive(Debug)]
 struct SizeScale;
 
-impl WeightScale<Checksum, SizedModule> for SizeScale {
+impl WeightScale<Checksum, SizedArtifact> for SizeScale {
     #[inline]
-    fn weight(&self, _key: &Checksum, value: &SizedModule) -> usize {
+    fn weight(&self, _key: &Checksum, value: &SizedArtifact) -> usize {
         value.size
     }
 }
 
 /// An in-memory module cache
 pub struct InMemoryCache {
-    modules: Option<CLruCache<Checksum, SizedModule, RandomState, SizeScale>>,
+    artifacts: Option<CLruCache<Checksum, SizedArtifact, RandomState, SizeScale>>,
 }
 
 impl InMemoryCache {
@@ -37,7 +40,7 @@ impl InMemoryCache {
         let preallocated_entries = size.0 / MINIMUM_MODULE_SIZE.0;
 
         InMemoryCache {
-            modules: if size.0 > 0 {
+            artifacts: if size.0 > 0 {
                 Some(CLruCache::with_config(
                     CLruCacheConfig::new(NonZeroUsize::new(size.0).unwrap())
                         .with_memory(preallocated_entries)
@@ -49,20 +52,59 @@ impl InMemoryCache {
         }
     }
 
-    pub fn store(&mut self, checksum: &Checksum, module: Module, size: usize) -> VmResult<()> {
-        if let Some(modules) = &mut self.modules {
-            modules
-                .put_with_weight(*checksum, SizedModule { module, size })
+    pub fn store(&mut self, checksum: &Checksum, module: Module) -> VmResult<()> {
+        if let Some(artifacts) = &mut self.artifacts {
+            let artifact = module.serialize()?;
+            let size = loupe::size_of_val(&module) + loupe::size_of_val(&artifact);
+            artifacts
+                .put_with_weight(
+                    *checksum,
+                    SizedArtifact {
+                        size,
+                        artifact: Arc::new(artifact),
+                        shared_module: Arc::new(Mutex::new(SharedModule {
+                            module,
+                            refreshing: false,
+                        })),
+                    },
+                )
                 .map_err(|e| VmError::cache_err(format!("{:?}", e)))?;
         }
         Ok(())
     }
 
     /// Looks up a module in the cache and creates a new module
-    pub fn load(&mut self, checksum: &Checksum) -> VmResult<Option<SizedModule>> {
-        if let Some(modules) = &mut self.modules {
-            match modules.get(checksum) {
-                Some(module) => Ok(Some(module.clone())),
+    pub fn load(
+        &mut self,
+        checksum: &Checksum,
+        instance_memory_limit: Option<Size>,
+    ) -> VmResult<Option<Module>> {
+        if let Some(artifacts) = &mut self.artifacts {
+            match artifacts.get(checksum) {
+                Some(sized_artifact) => {
+                    let mut shared_module = sized_artifact.shared_module.lock().unwrap();
+                    let module = shared_module.module.clone();
+                    if !shared_module.refreshing {
+                        (*shared_module).refreshing = true;
+
+                        // make background tread to recreate module from artifact
+                        let artifact = sized_artifact.artifact.clone();
+                        let shared_module = sized_artifact.shared_module.clone();
+                        thread::spawn(move || {
+                            let store = make_runtime_store(instance_memory_limit);
+                            let module = unsafe { Module::deserialize(&store, &artifact) }.unwrap();
+
+                            // hold lock to replace shared module
+                            let mut shared_module = shared_module.lock().unwrap();
+                            (*shared_module) = SharedModule {
+                                refreshing: false,
+                                module,
+                            };
+                        });
+                    }
+
+                    Ok(Some(module))
+                }
                 None => Ok(None),
             }
         } else {
@@ -72,9 +114,9 @@ impl InMemoryCache {
 
     /// Returns the number of elements in the cache.
     pub fn len(&self) -> usize {
-        self.modules
+        self.artifacts
             .as_ref()
-            .map(|modules| modules.len())
+            .map(|artifacts| artifacts.len())
             .unwrap_or_default()
     }
 
@@ -83,9 +125,9 @@ impl InMemoryCache {
     /// This is based on the values provided with `store`. No actual
     /// memory size is measured here.
     pub fn size(&self) -> usize {
-        self.modules
+        self.artifacts
             .as_ref()
-            .map(|modules| modules.weight())
+            .map(|artifacts| artifacts.weight())
             .unwrap_or_default()
     }
 }
@@ -99,9 +141,9 @@ mod tests {
     use wasmer::{imports, Instance as WasmerInstance};
     use wasmer_middlewares::metering::set_remaining_points;
 
+    const TESTING_MEMORY_LIMIT: Option<Size> = Some(Size::mebi(16));
     const TESTING_GAS_LIMIT: u64 = 5_000;
     // Based on `examples/module_size.sh`
-    const TESTING_WASM_SIZE_FACTOR: usize = 18;
 
     #[test]
     fn check_element_sizes() {
@@ -138,7 +180,7 @@ mod tests {
         let checksum = Checksum::generate(&wasm);
 
         // Module does not exist
-        let cache_entry = cache.load(&checksum).unwrap();
+        let cache_entry = cache.load(&checksum, TESTING_MEMORY_LIMIT).unwrap();
         assert!(cache_entry.is_none());
 
         // Compile module
@@ -154,15 +196,17 @@ mod tests {
         }
 
         // Store module
-        let size = wasm.len() * TESTING_WASM_SIZE_FACTOR;
-        cache.store(&checksum, original, size).unwrap();
+        cache.store(&checksum, original).unwrap();
 
         // Load module
-        let cached = cache.load(&checksum).unwrap().unwrap();
+        let cached = cache
+            .load(&checksum, TESTING_MEMORY_LIMIT)
+            .unwrap()
+            .unwrap();
 
         // Ensure cached module can be executed
         {
-            let instance = WasmerInstance::new(&cached.module, &imports! {}).unwrap();
+            let instance = WasmerInstance::new(&cached, &imports! {}).unwrap();
             set_remaining_points(&instance, TESTING_GAS_LIMIT);
             let add_one = instance.exports.get_function("add_one").unwrap();
             let result = add_one.call(&[42.into()]).unwrap();
@@ -172,7 +216,7 @@ mod tests {
 
     #[test]
     fn len_works() {
-        let mut cache = InMemoryCache::new(Size::mebi(2));
+        let mut cache = InMemoryCache::new(Size::kilo(8));
 
         // Create module
         let wasm1 = wat::parse_str(
@@ -213,26 +257,26 @@ mod tests {
 
         // Add 1
         cache
-            .store(&checksum1, compile(&wasm1, None).unwrap(), 900_000)
+            .store(&checksum1, compile(&wasm1, None).unwrap())
             .unwrap();
         assert_eq!(cache.len(), 1);
 
         // Add 2
         cache
-            .store(&checksum2, compile(&wasm2, None).unwrap(), 900_000)
+            .store(&checksum2, compile(&wasm2, None).unwrap())
             .unwrap();
-        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.len(), 1);
 
         // Add 3 (pushes out the previous two)
         cache
-            .store(&checksum3, compile(&wasm3, None).unwrap(), 1_500_000)
+            .store(&checksum3, compile(&wasm3, None).unwrap())
             .unwrap();
         assert_eq!(cache.len(), 1);
     }
 
     #[test]
     fn size_works() {
-        let mut cache = InMemoryCache::new(Size::mebi(2));
+        let mut cache = InMemoryCache::new(Size::mebi(6));
 
         // Create module
         let wasm1 = wat::parse_str(
@@ -272,21 +316,24 @@ mod tests {
         assert_eq!(cache.size(), 0);
 
         // Add 1
-        cache
-            .store(&checksum1, compile(&wasm1, None).unwrap(), 900_000)
-            .unwrap();
-        assert_eq!(cache.size(), 900_000);
+        let module1 = compile(&wasm1, None).unwrap();
+        let module1_size =
+            loupe::size_of_val(&module1) + loupe::size_of_val(&module1.serialize().unwrap());
+        cache.store(&checksum1, module1).unwrap();
+        assert_eq!(cache.size(), module1_size);
 
         // Add 2
-        cache
-            .store(&checksum2, compile(&wasm2, None).unwrap(), 800_000)
-            .unwrap();
-        assert_eq!(cache.size(), 1_700_000);
+        let module2 = compile(&wasm2, None).unwrap();
+        let module2_size =
+            loupe::size_of_val(&module2) + loupe::size_of_val(&module2.serialize().unwrap());
+        cache.store(&checksum2, module2).unwrap();
+        assert_eq!(cache.size(), module2_size + module1_size);
 
         // Add 3 (pushes out the previous two)
-        cache
-            .store(&checksum3, compile(&wasm3, None).unwrap(), 1_500_000)
-            .unwrap();
-        assert_eq!(cache.size(), 1_500_000);
+        let module3 = compile(&wasm3, None).unwrap();
+        let module3_size =
+            loupe::size_of_val(&module3) + loupe::size_of_val(&module3.serialize().unwrap());
+        cache.store(&checksum3, module3).unwrap();
+        assert_eq!(cache.size(), module3_size + module2_size + module1_size);
     }
 }
