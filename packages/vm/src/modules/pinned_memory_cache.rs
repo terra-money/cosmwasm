@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use threadpool::ThreadPool;
 use wasmer::Module;
 
 use super::sized_artifact::{SharedModule, SizedArtifact};
@@ -10,13 +10,15 @@ use crate::{Checksum, Size, VmResult};
 /// An pinned in memory module cache
 pub struct PinnedMemoryCache {
     artifacts: HashMap<Checksum, SizedArtifact>,
+    pool: ThreadPool,
 }
 
 impl PinnedMemoryCache {
     /// Creates a new cache
-    pub fn new() -> Self {
+    pub fn new(refresh_thread_num: usize) -> Self {
         PinnedMemoryCache {
             artifacts: HashMap::new(),
+            pool: ThreadPool::new(refresh_thread_num),
         }
     }
 
@@ -59,16 +61,30 @@ impl PinnedMemoryCache {
                     (*shared_module).refreshing = true;
 
                     // make background tread to recreate module from artifact
-                    let artifact = sized_artifact.artifact.clone();
-                    let shared_module = sized_artifact.shared_module.clone();
-                    thread::spawn(move || {
+                    let artifact = Arc::downgrade(&sized_artifact.artifact);
+                    let shared_module = Arc::downgrade(&sized_artifact.shared_module);
+                    self.pool.execute(move || {
+                        let artifact = artifact.upgrade();
+                        if artifact.is_none() {
+                            return;
+                        }
+
+                        let artifact = artifact.unwrap();
                         let store = make_runtime_store(instance_memory_limit);
                         let module = unsafe { Module::deserialize(&store, &artifact) }.unwrap();
 
                         // hold lock to replace shared module
+                        let shared_module = shared_module.upgrade();
+                        if shared_module.is_none() {
+                            return;
+                        }
+
+                        let shared_module = shared_module.unwrap();
                         let mut shared_module = shared_module.lock().unwrap();
-                        (*shared_module).refreshing = false;
-                        (*shared_module).module = module;
+                        (*shared_module) = SharedModule {
+                            refreshing: false,
+                            module,
+                        };
                     });
                 }
 
@@ -106,11 +122,12 @@ mod tests {
     use wasmer_middlewares::metering::set_remaining_points;
 
     const TESTING_MEMORY_LIMIT: Option<Size> = Some(Size::mebi(16));
+    const TESTING_REFRESH_THREAD_NUM: usize = 4usize;
     const TESTING_GAS_LIMIT: u64 = 5_000;
 
     #[test]
     fn pinned_memory_cache_run() {
-        let mut cache = PinnedMemoryCache::new();
+        let mut cache = PinnedMemoryCache::new(TESTING_REFRESH_THREAD_NUM);
 
         // Create module
         let wasm = wat::parse_str(
@@ -162,7 +179,7 @@ mod tests {
 
     #[test]
     fn has_works() {
-        let mut cache = PinnedMemoryCache::new();
+        let mut cache = PinnedMemoryCache::new(TESTING_REFRESH_THREAD_NUM);
 
         // Create module
         let wasm = wat::parse_str(
@@ -193,7 +210,7 @@ mod tests {
 
     #[test]
     fn len_works() {
-        let mut cache = PinnedMemoryCache::new();
+        let mut cache = PinnedMemoryCache::new(TESTING_REFRESH_THREAD_NUM);
 
         // Create module
         let wasm = wat::parse_str(
@@ -224,7 +241,7 @@ mod tests {
 
     #[test]
     fn size_works() {
-        let mut cache = PinnedMemoryCache::new();
+        let mut cache = PinnedMemoryCache::new(TESTING_REFRESH_THREAD_NUM);
 
         // Create module
         let wasm1 = wat::parse_str(

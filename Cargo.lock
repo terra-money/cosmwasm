@@ -245,6 +245,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "threadpool",
  "wasmer",
  "wasmer-middlewares",
  "wat",
@@ -1531,6 +1532,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "threadpool"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
+dependencies = [
+ "num_cpus",
+]
+
+[[package]]
 name = "time"
 version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1704,7 +1714,7 @@ checksum = "d7cff876b8f18eed75a66cf49b65e7f967cb354a7aa16003fb55dbfd25b44b4f"
 [[package]]
 name = "wasmer"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "cfg-if",
  "indexmap",
@@ -1727,7 +1737,7 @@ dependencies = [
 [[package]]
 name = "wasmer-compiler"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "enumset",
  "loupe",
@@ -1745,7 +1755,7 @@ dependencies = [
 [[package]]
 name = "wasmer-compiler-cranelift"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "cranelift-codegen",
  "cranelift-entity",
@@ -1764,7 +1774,7 @@ dependencies = [
 [[package]]
 name = "wasmer-compiler-singlepass"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "byteorder",
  "dynasm",
@@ -1782,7 +1792,7 @@ dependencies = [
 [[package]]
 name = "wasmer-derive"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
@@ -1793,7 +1803,7 @@ dependencies = [
 [[package]]
 name = "wasmer-engine"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "backtrace",
  "lazy_static",
@@ -1813,7 +1823,7 @@ dependencies = [
 [[package]]
 name = "wasmer-engine-dylib"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "cfg-if",
  "leb128",
@@ -1834,7 +1844,7 @@ dependencies = [
 [[package]]
 name = "wasmer-engine-universal"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "cfg-if",
  "leb128",
@@ -1851,7 +1861,7 @@ dependencies = [
 [[package]]
 name = "wasmer-middlewares"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "loupe",
  "wasmer",
@@ -1862,7 +1872,7 @@ dependencies = [
 [[package]]
 name = "wasmer-object"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "object",
  "thiserror",
@@ -1873,7 +1883,7 @@ dependencies = [
 [[package]]
 name = "wasmer-types"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "indexmap",
  "loupe",
@@ -1885,7 +1895,7 @@ dependencies = [
 [[package]]
 name = "wasmer-vm"
 version = "2.0.0"
-source = "git+https://github.com/terra-money/wasmer?rev=e70484bfd56a7a47fa3ecd739cb1e581ecb69ade#e70484bfd56a7a47fa3ecd739cb1e581ecb69ade"
+source = "git+https://github.com/terra-money/wasmer?rev=d7ce670af1b9cb56f6f63d5fdde4e36eeb660500#d7ce670af1b9cb56f6f63d5fdde4e36eeb660500"
 dependencies = [
  "backtrace",
  "cc",

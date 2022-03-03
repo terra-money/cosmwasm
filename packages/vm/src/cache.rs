@@ -49,6 +49,7 @@ pub struct CacheOptions {
     /// Memory limit for instances, in bytes. Use a value that is divisible by the Wasm page size 65536,
     /// e.g. full MiBs.
     pub instance_memory_limit: Size,
+    pub refresh_thread_num: usize,
 }
 
 pub struct CacheInner {
@@ -98,6 +99,7 @@ where
             supported_features,
             memory_cache_size,
             instance_memory_limit,
+            refresh_thread_num,
         } = options;
 
         let state_path = base_dir.join(STATE_DIR);
@@ -123,8 +125,8 @@ where
             inner: Mutex::new(CacheInner {
                 wasm_path,
                 instance_memory_limit,
-                pinned_memory_cache: PinnedMemoryCache::new(),
-                memory_cache: InMemoryCache::new(memory_cache_size),
+                pinned_memory_cache: PinnedMemoryCache::new(refresh_thread_num),
+                memory_cache: InMemoryCache::new(memory_cache_size, refresh_thread_num),
                 fs_cache,
                 stats: Stats::default(),
             }),
@@ -371,6 +373,7 @@ mod tests {
         print_debug: false,
     };
     const TESTING_MEMORY_CACHE_SIZE: Size = Size::mebi(200);
+    const TESTING_REFRESH_THREAD_NUM: usize = 4usize;
 
     static CONTRACT: &[u8] = include_bytes!("../testdata/hackatom.wasm");
     static IBC_CONTRACT: &[u8] = include_bytes!("../testdata/ibc_reflect.wasm");
@@ -385,6 +388,7 @@ mod tests {
             supported_features: default_features(),
             memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
             instance_memory_limit: TESTING_MEMORY_LIMIT,
+            refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
         }
     }
 
@@ -394,6 +398,7 @@ mod tests {
             supported_features: features_from_csv("staking,stargate"),
             memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
             instance_memory_limit: TESTING_MEMORY_LIMIT,
+            refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
         }
     }
 
@@ -477,6 +482,7 @@ mod tests {
                 supported_features: default_features(),
                 memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
                 instance_memory_limit: TESTING_MEMORY_LIMIT,
+                refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
             };
             let cache1: Cache<MockApi, MockStorage, MockQuerier> =
                 unsafe { Cache::new(options1).unwrap() };
@@ -489,6 +495,7 @@ mod tests {
                 supported_features: default_features(),
                 memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
                 instance_memory_limit: TESTING_MEMORY_LIMIT,
+                refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
             };
             let cache2: Cache<MockApi, MockStorage, MockQuerier> =
                 unsafe { Cache::new(options2).unwrap() };
@@ -523,6 +530,7 @@ mod tests {
             supported_features: default_features(),
             memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
             instance_memory_limit: TESTING_MEMORY_LIMIT,
+            refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
         };
         let cache: Cache<MockApi, MockStorage, MockQuerier> =
             unsafe { Cache::new(options).unwrap() };

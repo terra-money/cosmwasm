@@ -2,7 +2,7 @@ use clru::{CLruCache, CLruCacheConfig, WeightScale};
 use std::collections::hash_map::RandomState;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use threadpool::ThreadPool;
 use wasmer::Module;
 
 use super::sized_artifact::{SharedModule, SizedArtifact};
@@ -31,12 +31,13 @@ impl WeightScale<Checksum, SizedArtifact> for SizeScale {
 /// An in-memory module cache
 pub struct InMemoryCache {
     artifacts: Option<CLruCache<Checksum, SizedArtifact, RandomState, SizeScale>>,
+    pool: ThreadPool,
 }
 
 impl InMemoryCache {
     /// Creates a new cache with the given size (in bytes)
     /// and pre-allocated entries.
-    pub fn new(size: Size) -> Self {
+    pub fn new(size: Size, refresh_thread_num: usize) -> Self {
         let preallocated_entries = size.0 / MINIMUM_MODULE_SIZE.0;
 
         InMemoryCache {
@@ -49,6 +50,7 @@ impl InMemoryCache {
             } else {
                 None
             },
+            pool: ThreadPool::new(refresh_thread_num),
         }
     }
 
@@ -88,13 +90,25 @@ impl InMemoryCache {
                         (*shared_module).refreshing = true;
 
                         // make background tread to recreate module from artifact
-                        let artifact = sized_artifact.artifact.clone();
-                        let shared_module = sized_artifact.shared_module.clone();
-                        thread::spawn(move || {
+                        let artifact = Arc::downgrade(&sized_artifact.artifact);
+                        let shared_module = Arc::downgrade(&sized_artifact.shared_module);
+                        self.pool.execute(move || {
+                            let artifact = artifact.upgrade();
+                            if artifact.is_none() {
+                                return
+                            }
+
+                            let artifact = artifact.unwrap();
                             let store = make_runtime_store(instance_memory_limit);
                             let module = unsafe { Module::deserialize(&store, &artifact) }.unwrap();
 
                             // hold lock to replace shared module
+                            let shared_module = shared_module.upgrade();
+                            if shared_module.is_none() {
+                                return
+                            }
+
+                            let shared_module = shared_module.unwrap();
                             let mut shared_module = shared_module.lock().unwrap();
                             (*shared_module) = SharedModule {
                                 refreshing: false,
@@ -142,6 +156,7 @@ mod tests {
     use wasmer_middlewares::metering::set_remaining_points;
 
     const TESTING_MEMORY_LIMIT: Option<Size> = Some(Size::mebi(16));
+    const TESTING_REFRESH_THREAD_NUM: usize = 4usize;
     const TESTING_GAS_LIMIT: u64 = 5_000;
     // Based on `examples/module_size.sh`
 
@@ -164,7 +179,7 @@ mod tests {
 
     #[test]
     fn in_memory_cache_run() {
-        let mut cache = InMemoryCache::new(Size::mebi(200));
+        let mut cache = InMemoryCache::new(Size::mebi(200), TESTING_REFRESH_THREAD_NUM);
 
         // Create module
         let wasm = wat::parse_str(
@@ -216,7 +231,7 @@ mod tests {
 
     #[test]
     fn len_works() {
-        let mut cache = InMemoryCache::new(Size::kilo(8));
+        let mut cache = InMemoryCache::new(Size::kilo(8), TESTING_REFRESH_THREAD_NUM);
 
         // Create module
         let wasm1 = wat::parse_str(
@@ -276,7 +291,7 @@ mod tests {
 
     #[test]
     fn size_works() {
-        let mut cache = InMemoryCache::new(Size::mebi(6));
+        let mut cache = InMemoryCache::new(Size::mebi(6), TESTING_REFRESH_THREAD_NUM);
 
         // Create module
         let wasm1 = wat::parse_str(
