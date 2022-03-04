@@ -49,6 +49,7 @@ pub struct CacheOptions {
     /// Memory limit for instances, in bytes. Use a value that is divisible by the Wasm page size 65536,
     /// e.g. full MiBs.
     pub instance_memory_limit: Size,
+    pub refresh_thread_num: usize,
 }
 
 pub struct CacheInner {
@@ -98,6 +99,7 @@ where
             supported_features,
             memory_cache_size,
             instance_memory_limit,
+            refresh_thread_num,
         } = options;
 
         let state_path = base_dir.join(STATE_DIR);
@@ -123,8 +125,8 @@ where
             inner: Mutex::new(CacheInner {
                 wasm_path,
                 instance_memory_limit,
-                pinned_memory_cache: PinnedMemoryCache::new(),
-                memory_cache: InMemoryCache::new(memory_cache_size),
+                pinned_memory_cache: PinnedMemoryCache::new(refresh_thread_num),
+                memory_cache: InMemoryCache::new(memory_cache_size, refresh_thread_num),
                 fs_cache,
                 stats: Stats::default(),
             }),
@@ -205,21 +207,20 @@ where
         }
 
         // Try to get module from the memory cache
-        if let Some(module) = cache.memory_cache.load(checksum)? {
+        let instance_memory_limit = cache.instance_memory_limit;
+        if let Some(module) = cache
+            .memory_cache
+            .load(checksum, Some(instance_memory_limit))?
+        {
             cache.stats.hits_memory_cache += 1;
-            return cache
-                .pinned_memory_cache
-                .store(checksum, module.module, module.size);
+            return cache.pinned_memory_cache.store(checksum, module);
         }
 
         // Try to get module from file system cache
         let store = make_runtime_store(Some(cache.instance_memory_limit));
         if let Some(module) = cache.fs_cache.load(checksum, &store)? {
             cache.stats.hits_fs_cache += 1;
-            let module_size = loupe::size_of_val(&module);
-            return cache
-                .pinned_memory_cache
-                .store(checksum, module, module_size);
+            return cache.pinned_memory_cache.store(checksum, module);
         }
 
         // Re-compile from original Wasm bytecode
@@ -227,10 +228,7 @@ where
         let module = compile(&code, Some(cache.instance_memory_limit))?;
         // Store into the fs cache too
         cache.fs_cache.store(checksum, &module)?;
-        let module_size = loupe::size_of_val(&module);
-        cache
-            .pinned_memory_cache
-            .store(checksum, module, module_size)
+        cache.pinned_memory_cache.store(checksum, module)
     }
 
     /// Unpins a Module, i.e. removes it from the pinned memory cache.
@@ -254,8 +252,13 @@ where
         options: InstanceOptions,
     ) -> VmResult<Instance<A, S, Q>> {
         let mut cache = self.inner.lock().unwrap();
+        let instance_memory_limit = cache.instance_memory_limit;
+
         // Try to get module from the pinned memory cache
-        if let Some(module) = cache.pinned_memory_cache.load(checksum)? {
+        if let Some(module) = cache
+            .pinned_memory_cache
+            .load(checksum, Some(instance_memory_limit))?
+        {
             cache.stats.hits_pinned_memory_cache += 1;
             let instance =
                 Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
@@ -263,14 +266,13 @@ where
         }
 
         // Get module from memory cache
-        if let Some(module) = cache.memory_cache.load(checksum)? {
+        if let Some(module) = cache
+            .memory_cache
+            .load(checksum, Some(instance_memory_limit))?
+        {
             cache.stats.hits_memory_cache += 1;
-            let instance = Instance::from_module(
-                &module.module,
-                backend,
-                options.gas_limit,
-                options.print_debug,
-            )?;
+            let instance =
+                Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
             return Ok(instance);
         }
 
@@ -280,8 +282,7 @@ where
             cache.stats.hits_fs_cache += 1;
             let instance =
                 Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
-            let module_size = loupe::size_of_val(&module);
-            cache.memory_cache.store(checksum, module, module_size)?;
+            cache.memory_cache.store(checksum, module)?;
             return Ok(instance);
         }
 
@@ -296,8 +297,7 @@ where
         let instance =
             Instance::from_module(&module, backend, options.gas_limit, options.print_debug)?;
         cache.fs_cache.store(checksum, &module)?;
-        let module_size = loupe::size_of_val(&module);
-        cache.memory_cache.store(checksum, module, module_size)?;
+        cache.memory_cache.store(checksum, module)?;
         Ok(instance)
     }
 }
@@ -373,6 +373,7 @@ mod tests {
         print_debug: false,
     };
     const TESTING_MEMORY_CACHE_SIZE: Size = Size::mebi(200);
+    const TESTING_REFRESH_THREAD_NUM: usize = 4usize;
 
     static CONTRACT: &[u8] = include_bytes!("../testdata/hackatom.wasm");
     static IBC_CONTRACT: &[u8] = include_bytes!("../testdata/ibc_reflect.wasm");
@@ -387,6 +388,7 @@ mod tests {
             supported_features: default_features(),
             memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
             instance_memory_limit: TESTING_MEMORY_LIMIT,
+            refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
         }
     }
 
@@ -396,6 +398,7 @@ mod tests {
             supported_features: features_from_csv("staking,stargate"),
             memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
             instance_memory_limit: TESTING_MEMORY_LIMIT,
+            refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
         }
     }
 
@@ -479,6 +482,7 @@ mod tests {
                 supported_features: default_features(),
                 memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
                 instance_memory_limit: TESTING_MEMORY_LIMIT,
+                refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
             };
             let cache1: Cache<MockApi, MockStorage, MockQuerier> =
                 unsafe { Cache::new(options1).unwrap() };
@@ -491,6 +495,7 @@ mod tests {
                 supported_features: default_features(),
                 memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
                 instance_memory_limit: TESTING_MEMORY_LIMIT,
+                refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
             };
             let cache2: Cache<MockApi, MockStorage, MockQuerier> =
                 unsafe { Cache::new(options2).unwrap() };
@@ -525,6 +530,7 @@ mod tests {
             supported_features: default_features(),
             memory_cache_size: TESTING_MEMORY_CACHE_SIZE,
             instance_memory_limit: TESTING_MEMORY_LIMIT,
+            refresh_thread_num: TESTING_REFRESH_THREAD_NUM,
         };
         let cache: Cache<MockApi, MockStorage, MockQuerier> =
             unsafe { Cache::new(options).unwrap() };
