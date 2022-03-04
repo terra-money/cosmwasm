@@ -20,6 +20,7 @@ const DEFAULT_INSTANCE_OPTIONS: InstanceOptions = InstanceOptions {
 };
 // Cache
 const MEMORY_CACHE_SIZE: Size = Size::mebi(200);
+const REFRESH_THREAD_NUM: usize = 4usize;
 
 static CONTRACT: &[u8] = include_bytes!("../testdata/hackatom.wasm");
 
@@ -88,6 +89,7 @@ fn bench_cache(c: &mut Criterion) {
         supported_features: features_from_csv("staking"),
         memory_cache_size: MEMORY_CACHE_SIZE,
         instance_memory_limit: DEFAULT_MEMORY_LIMIT,
+        refresh_thread_num: REFRESH_THREAD_NUM,
     };
 
     group.bench_function("save wasm", |b| {
@@ -128,6 +130,7 @@ fn bench_cache(c: &mut Criterion) {
             supported_features: features_from_csv("staking"),
             memory_cache_size: Size(0),
             instance_memory_limit: DEFAULT_MEMORY_LIMIT,
+            refresh_thread_num: REFRESH_THREAD_NUM,
         };
         let cache: Cache<MockApi, MockStorage, MockQuerier> =
             unsafe { Cache::new(non_memcache).unwrap() };
