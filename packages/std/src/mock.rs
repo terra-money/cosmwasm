@@ -99,25 +99,35 @@ impl Default for MockApi {
 }
 
 impl Api for MockApi {
-    fn addr_validate(&self, human: &str) -> StdResult<Addr> {
-        self.addr_canonicalize(human).map(|_canonical| ())?;
-        Ok(Addr::unchecked(human))
+    fn addr_validate(&self, input: &str) -> StdResult<Addr> {
+        let canonical = self.addr_canonicalize(input)?;
+        let normalized = self.addr_humanize(&canonical)?;
+        if input != normalized {
+            return Err(StdError::generic_err(
+                "Invalid input: address not normalized",
+            ));
+        }
+
+        Ok(Addr::unchecked(input))
     }
 
-    fn addr_canonicalize(&self, human: &str) -> StdResult<CanonicalAddr> {
+    fn addr_canonicalize(&self, input: &str) -> StdResult<CanonicalAddr> {
         // Dummy input validation. This is more sophisticated for formats like bech32, where format and checksum are validated.
-        if human.len() < 3 {
+        if input.len() < 3 {
             return Err(StdError::generic_err(
                 "Invalid input: human address too short",
             ));
         }
-        if human.len() > self.canonical_length {
+        if input.len() > self.canonical_length {
             return Err(StdError::generic_err(
                 "Invalid input: human address too long",
             ));
         }
 
-        let mut out = Vec::from(human);
+        // mimicks formats like hex or bech32 where different casings are valid for one address
+        let normalized = input.to_lowercase();
+
+        let mut out = Vec::from(normalized);
 
         // pad to canonical length with NULL bytes
         out.resize(self.canonical_length, 0x00);
@@ -393,13 +403,12 @@ pub fn mock_ibc_packet_timeout(
 pub type MockQuerierCustomHandlerResult = SystemResult<ContractResult<Binary>>;
 
 /// MockQuerier holds an immutable table of bank balances
-/// TODO: also allow querying contracts
+/// and configurable handlers for Wasm queries and custom queries.
 pub struct MockQuerier<C: DeserializeOwned = Empty> {
     bank: BankQuerier,
     #[cfg(feature = "staking")]
     staking: StakingQuerier,
-    // placeholder to add support later
-    wasm: NoWasmQuerier,
+    wasm: WasmQuerier,
     /// A handler to handle custom queries. This is set to a dummy handler that
     /// always errors by default. Update it via `with_custom_handler`.
     ///
@@ -413,7 +422,7 @@ impl<C: DeserializeOwned> MockQuerier<C> {
             bank: BankQuerier::new(balances),
             #[cfg(feature = "staking")]
             staking: StakingQuerier::default(),
-            wasm: NoWasmQuerier {},
+            wasm: WasmQuerier::default(),
             // strange argument notation suggested as a workaround here: https://github.com/rust-lang/rust/issues/41078#issuecomment-294296365
             custom_handler: Box::from(|_: &_| -> MockQuerierCustomHandlerResult {
                 SystemResult::Err(SystemError::UnsupportedRequest {
@@ -440,6 +449,13 @@ impl<C: DeserializeOwned> MockQuerier<C> {
         delegations: &[crate::query::FullDelegation],
     ) {
         self.staking = StakingQuerier::new(denom, validators, delegations);
+    }
+
+    pub fn update_wasm<WH: 'static>(&mut self, handler: WH)
+    where
+        WH: Fn(&WasmQuery) -> QuerierResult,
+    {
+        self.wasm.update_handler(handler)
     }
 
     pub fn with_custom_handler<CH: 'static>(mut self, handler: CH) -> Self
@@ -492,20 +508,43 @@ impl<C: CustomQuery + DeserializeOwned> MockQuerier<C> {
     }
 }
 
-#[derive(Clone, Default)]
-struct NoWasmQuerier {
-    // FIXME: actually provide a way to call out
+struct WasmQuerier {
+    /// A handler to handle Wasm queries. This is set to a dummy handler that
+    /// always errors by default. Update it via `with_custom_handler`.
+    ///
+    /// Use box to avoid the need of generic type.
+    handler: Box<dyn for<'a> Fn(&'a WasmQuery) -> QuerierResult>,
 }
 
-impl NoWasmQuerier {
+impl WasmQuerier {
+    fn new(handler: Box<dyn for<'a> Fn(&'a WasmQuery) -> QuerierResult>) -> Self {
+        Self { handler }
+    }
+
+    fn update_handler<WH: 'static>(&mut self, handler: WH)
+    where
+        WH: Fn(&WasmQuery) -> QuerierResult,
+    {
+        self.handler = Box::from(handler)
+    }
+
     fn query(&self, request: &WasmQuery) -> QuerierResult {
-        let addr = match request {
-            WasmQuery::Smart { contract_addr, .. } => contract_addr,
-            WasmQuery::Raw { contract_addr, .. } => contract_addr,
-            WasmQuery::ContractInfo { contract_addr, .. } => contract_addr,
-        }
-        .clone();
-        SystemResult::Err(SystemError::NoSuchContract { addr })
+        (*self.handler)(request)
+    }
+}
+
+impl Default for WasmQuerier {
+    fn default() -> Self {
+        let handler = Box::from(|request: &WasmQuery| -> QuerierResult {
+            let addr = match request {
+                WasmQuery::Smart { contract_addr, .. } => contract_addr,
+                WasmQuery::Raw { contract_addr, .. } => contract_addr,
+                WasmQuery::ContractInfo { contract_addr, .. } => contract_addr,
+            }
+            .clone();
+            SystemResult::Err(SystemError::NoSuchContract { addr })
+        });
+        Self::new(handler)
     }
 }
 
@@ -702,10 +741,11 @@ pub fn mock_wasmd_attr(key: impl Into<String>, value: impl Into<String>) -> Attr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{coin, coins, from_binary};
+    use crate::{coin, coins, from_binary, to_binary, ContractInfoResponse, Response};
     #[cfg(feature = "staking")]
     use crate::{Decimal, Delegation};
     use hex_literal::hex;
+    use serde::Deserialize;
 
     const SECP256K1_MSG_HASH_HEX: &str =
         "5ae8317d34d1e595e3fa7247db80c0af4320cce1116de187f8f7e2e099c0d8d0";
@@ -733,13 +773,47 @@ mod tests {
     }
 
     #[test]
+    fn addr_validate_works() {
+        let api = MockApi::default();
+
+        // valid
+        let addr = api.addr_validate("foobar123").unwrap();
+        assert_eq!(addr, "foobar123");
+
+        // invalid: too short
+        api.addr_validate("").unwrap_err();
+        // invalid: not normalized
+        api.addr_validate("Foobar123").unwrap_err();
+        api.addr_validate("FOOBAR123").unwrap_err();
+    }
+
+    #[test]
+    fn addr_canonicalize_works() {
+        let api = MockApi::default();
+
+        api.addr_canonicalize("foobar123").unwrap();
+
+        // is case insensitive
+        let data1 = api.addr_canonicalize("foo123").unwrap();
+        let data2 = api.addr_canonicalize("FOO123").unwrap();
+        assert_eq!(data1, data2);
+    }
+
+    #[test]
     fn canonicalize_and_humanize_restores_original() {
         let api = MockApi::default();
 
+        // simple
         let original = String::from("shorty");
         let canonical = api.addr_canonicalize(&original).unwrap();
         let recovered = api.addr_humanize(&canonical).unwrap();
         assert_eq!(recovered, original);
+
+        // normalizes input
+        let original = String::from("CosmWasmChef");
+        let canonical = api.addr_canonicalize(&original).unwrap();
+        let recovered = api.addr_humanize(&canonical).unwrap();
+        assert_eq!(recovered, "cosmwasmchef");
     }
 
     #[test]
@@ -757,17 +831,6 @@ mod tests {
         let human =
             String::from("some-extremely-long-address-not-supported-by-this-api-longer-than-54");
         let _ = api.addr_canonicalize(&human).unwrap();
-    }
-
-    #[test]
-    fn addr_canonicalize_works_with_string_inputs() {
-        let api = MockApi::default();
-
-        let input = String::from("foobar123");
-        api.addr_canonicalize(&input).unwrap();
-
-        let input = "foobar456";
-        api.addr_canonicalize(input).unwrap();
     }
 
     #[test]
@@ -1247,6 +1310,158 @@ mod tests {
         assert_eq!(dels, None);
         let dels = get_delegator(&staking, user_c, val2);
         assert_eq!(dels, Some(del2c));
+    }
+
+    #[test]
+    fn wasm_querier_works() {
+        let mut querier = WasmQuerier::default();
+
+        let any_addr = "foo".to_string();
+
+        // Query WasmQuery::Raw
+        let system_err = querier
+            .query(&WasmQuery::Raw {
+                contract_addr: any_addr.clone(),
+                key: b"the key".into(),
+            })
+            .unwrap_err();
+        match system_err {
+            SystemError::NoSuchContract { addr } => assert_eq!(addr, any_addr),
+            err => panic!("Unexpected error: {:?}", err),
+        }
+
+        // Query WasmQuery::Smart
+        let system_err = querier
+            .query(&WasmQuery::Smart {
+                contract_addr: any_addr.clone(),
+                msg: b"{}".into(),
+            })
+            .unwrap_err();
+        match system_err {
+            SystemError::NoSuchContract { addr } => assert_eq!(addr, any_addr),
+            err => panic!("Unexpected error: {:?}", err),
+        }
+
+        // Query WasmQuery::ContractInfo
+        let system_err = querier
+            .query(&WasmQuery::ContractInfo {
+                contract_addr: any_addr.clone(),
+            })
+            .unwrap_err();
+        match system_err {
+            SystemError::NoSuchContract { addr } => assert_eq!(addr, any_addr),
+            err => panic!("Unexpected error: {:?}", err),
+        }
+
+        querier.update_handler(|request| {
+            let constract1 = Addr::unchecked("contract1");
+            let mut storage1 = HashMap::<Binary, Binary>::default();
+            storage1.insert(b"the key".into(), b"the value".into());
+
+            match request {
+                WasmQuery::Raw { contract_addr, key } => {
+                    if *contract_addr == constract1 {
+                        if let Some(value) = storage1.get(key) {
+                            SystemResult::Ok(ContractResult::Ok(value.clone()))
+                        } else {
+                            SystemResult::Ok(ContractResult::Ok(Binary::default()))
+                        }
+                    } else {
+                        SystemResult::Err(SystemError::NoSuchContract {
+                            addr: contract_addr.clone(),
+                        })
+                    }
+                }
+                WasmQuery::Smart { contract_addr, msg } => {
+                    if *contract_addr == constract1 {
+                        #[derive(Deserialize)]
+                        struct MyMsg {}
+                        let _msg: MyMsg = match from_binary(msg) {
+                            Ok(msg) => msg,
+                            Err(err) => {
+                                return SystemResult::Ok(ContractResult::Err(err.to_string()))
+                            }
+                        };
+                        let response: Response = Response::new().set_data(b"good");
+                        SystemResult::Ok(ContractResult::Ok(to_binary(&response).unwrap()))
+                    } else {
+                        SystemResult::Err(SystemError::NoSuchContract {
+                            addr: contract_addr.clone(),
+                        })
+                    }
+                }
+                WasmQuery::ContractInfo { contract_addr } => {
+                    if *contract_addr == constract1 {
+                        let response = ContractInfoResponse {
+                            code_id: 4,
+                            creator: "lalala".into(),
+                            admin: None,
+                            pinned: false,
+                            ibc_port: None,
+                        };
+                        SystemResult::Ok(ContractResult::Ok(to_binary(&response).unwrap()))
+                    } else {
+                        SystemResult::Err(SystemError::NoSuchContract {
+                            addr: contract_addr.clone(),
+                        })
+                    }
+                }
+            }
+        });
+
+        // WasmQuery::Raw
+        let result = querier.query(&WasmQuery::Raw {
+            contract_addr: "contract1".into(),
+            key: b"the key".into(),
+        });
+        match result {
+            SystemResult::Ok(ContractResult::Ok(value)) => assert_eq!(value, b"the value" as &[u8]),
+            res => panic!("Unexpected result: {:?}", res),
+        }
+        let result = querier.query(&WasmQuery::Raw {
+            contract_addr: "contract1".into(),
+            key: b"other key".into(),
+        });
+        match result {
+            SystemResult::Ok(ContractResult::Ok(value)) => assert_eq!(value, b"" as &[u8]),
+            res => panic!("Unexpected result: {:?}", res),
+        }
+
+        // WasmQuery::Smart
+        let result = querier.query(&WasmQuery::Smart {
+            contract_addr: "contract1".into(),
+            msg: b"{}".into(),
+        });
+        match result {
+            SystemResult::Ok(ContractResult::Ok(value)) => assert_eq!(
+                value,
+                br#"{"messages":[],"attributes":[],"events":[],"data":"Z29vZA=="}"# as &[u8]
+            ),
+            res => panic!("Unexpected result: {:?}", res),
+        }
+        let result = querier.query(&WasmQuery::Smart {
+            contract_addr: "contract1".into(),
+            msg: b"a broken request".into(),
+        });
+        match result {
+            SystemResult::Ok(ContractResult::Err(err)) => {
+                assert_eq!(err, "Error parsing into type cosmwasm_std::mock::tests::wasm_querier_works::{{closure}}::MyMsg: Invalid type")
+            }
+            res => panic!("Unexpected result: {:?}", res),
+        }
+
+        // WasmQuery::ContractInfo
+        let result = querier.query(&WasmQuery::ContractInfo {
+            contract_addr: "contract1".into(),
+        });
+        match result {
+            SystemResult::Ok(ContractResult::Ok(value)) => assert_eq!(
+                value,
+                br#"{"code_id":4,"creator":"lalala","admin":null,"pinned":false,"ibc_port":null}"#
+                    as &[u8]
+            ),
+            res => panic!("Unexpected result: {:?}", res),
+        }
     }
 
     #[test]

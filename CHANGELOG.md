@@ -6,6 +6,85 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.0.0-beta8] - 2022-04-06
+
+### Added
+
+- cosmwasm-std: Implement `MulAssign` for `Decimal`/`Decimal256`.
+- cosmwasm-std: Implement `is_zero`/`atomics`/`decimal_places` as const for Uint
+  and Decimal types.
+- cosmwasm-std: Implement `new` and `raw` const constructors for
+  `Decimal`/`Decimal256`.
+
+### Changed
+
+- all: Drop support for Rust versions lower than 1.56.1.
+- cosmwasm-std: `MockQuerier` now supports adding custom behaviour for handling
+  Wasm queries via `MockQuerier::update_wasm` ([#1050]).
+
+[#1050]: https://github.com/CosmWasm/cosmwasm/pull/1050
+
+### Fixed
+
+- cosmwasm-std: `Api::addr_validate` now requires inputs to be normalized.
+- cosmwasm-vm: The `addr_validate` import now requires inputs to be normalized.
+
+## [1.0.0-beta7] - 2022-03-22
+
+### Added
+
+- cosmwasm-std: Implement `Decimal{,256}::checked_mul` and
+  `Decimal{,256}::checked_pow`.
+- cosmwasm-std: Implement `Sub`/`SubAssign` for `Uint64`.
+- cosmwasm-std: Implement `Mul`/`MulAssign` for `Uint64`.
+- cosmwasm-std: Implement `RemAssign` for
+  `Uint64`/`Uint128`/`Uint256`/`Uint512`.
+- cosmwasm-std: Implement `pow`/`checked_pow` for `Uint64`/`Uint128`/`Uint512`.
+- cosmwasm-std: Implement `SubAssign`/`AddAssign` for `Decimal`/`Decimal256`.
+- cosmwasm-crypto: Upgrade ed25519-zebra to version 3.
+
+### Changed
+
+- cosmwasm-vm: Upgrade Wasmer to 2.2.1.
+
+## [1.0.0-beta6] - 2022-03-07
+
+### Added
+
+- cosmwasm-std: Implement `ops::Rem` for `Uint{64,128,256,512}`.
+
+### Changed
+
+- cosmwasm-std: Change type of `Reply::result` from `ContractResult` to the new
+  `SubMsgResult`. Both types are equal when serialized but `ContractResult` is
+  documented to be the result of a contract execution, which is not the case
+  here. ([#1232])
+- cosmwasm-vm: Upgrade Wasmer to 2.2.0 and bump `MODULE_SERIALIZATION_VERSION`
+  to "v3-wasmer1". ([#1224])
+
+[#1224]: https://github.com/CosmWasm/cosmwasm/pull/1224
+[#1232]: https://github.com/CosmWasm/cosmwasm/pull/1232
+
+## [1.0.0-beta5] - 2022-02-08
+
+### Changed
+
+- all: Drop support for Rust versions lower than 1.54.0.
+- cosmwasm-std: The `Debug` implementation of `Binary` now produces a hex string
+  instead of a list of bytes ([#1199]).
+- cosmwasm-std: Pin uint version to 0.9.1 in order to maintain a reasonably low
+  MSRV.
+- cosmwasm-std: Add missing `Isqrt` export ([#1214]).
+
+[#1199]: https://github.com/CosmWasm/cosmwasm/issues/1199
+[#1214]: https://github.com/CosmWasm/cosmwasm/issues/1214
+
+### Fixed
+
+- cosmwasm-vm: Fix `AddAssign` implementation of `GasInfo`.
+- cosmwasm-vm: Bump `MODULE_SERIALIZATION_VERSION` to "v2" because the module
+  serialization format changed between Wasmer 2.0.0 and 2.1.x.
+
 ## [1.0.0-beta4] - 2021-12-23
 
 ### Changed
@@ -1215,7 +1294,15 @@ Some main points:
 
 All future Changelog entries will reference this base
 
-[unreleased]: https://github.com/CosmWasm/cosmwasm/compare/v1.0.0-beta4...HEAD
+[unreleased]: https://github.com/CosmWasm/cosmwasm/compare/v1.0.0-beta8...HEAD
+[1.0.0-beta8]:
+  https://github.com/CosmWasm/cosmwasm/compare/v1.0.0-beta7...v1.0.0-beta8
+[1.0.0-beta7]:
+  https://github.com/CosmWasm/cosmwasm/compare/v1.0.0-beta6...v1.0.0-beta7
+[1.0.0-beta6]:
+  https://github.com/CosmWasm/cosmwasm/compare/v1.0.0-beta5...v1.0.0-beta6
+[1.0.0-beta5]:
+  https://github.com/CosmWasm/cosmwasm/compare/v1.0.0-beta4...v1.0.0-beta5
 [1.0.0-beta4]:
   https://github.com/CosmWasm/cosmwasm/compare/v1.0.0-beta3...v1.0.0-beta4
 [1.0.0-beta3]:

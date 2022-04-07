@@ -1,9 +1,11 @@
+use forward_ref::{forward_ref_binop, forward_ref_op_assign};
 use schemars::JsonSchema;
 use serde::{de, ser, Deserialize, Deserializer, Serialize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
-use std::iter::Sum;
-use std::ops::{self, Shr};
+use std::ops::{
+    Add, AddAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Shr, ShrAssign, Sub, SubAssign,
+};
 use std::str::FromStr;
 
 use crate::errors::{
@@ -56,7 +58,7 @@ impl Uint512 {
 
     /// Creates a Uint512(value) from a big endian representation. It's just an alias for
     /// `from_big_endian`.
-    pub fn new(value: [u8; 64]) -> Self {
+    pub const fn new(value: [u8; 64]) -> Self {
         Self::from_be_bytes(value)
     }
 
@@ -151,74 +153,7 @@ impl Uint512 {
             (self.0).0[1].to_be_bytes(),
             (self.0).0[0].to_be_bytes(),
         ];
-
-        // In Rust 1.56+ we can use `unsafe { std::mem::transmute::<[[u8; 8]; 8], [u8; 64]>(words) }` for this
-        [
-            words[0][0],
-            words[0][1],
-            words[0][2],
-            words[0][3],
-            words[0][4],
-            words[0][5],
-            words[0][6],
-            words[0][7],
-            words[1][0],
-            words[1][1],
-            words[1][2],
-            words[1][3],
-            words[1][4],
-            words[1][5],
-            words[1][6],
-            words[1][7],
-            words[2][0],
-            words[2][1],
-            words[2][2],
-            words[2][3],
-            words[2][4],
-            words[2][5],
-            words[2][6],
-            words[2][7],
-            words[3][0],
-            words[3][1],
-            words[3][2],
-            words[3][3],
-            words[3][4],
-            words[3][5],
-            words[3][6],
-            words[3][7],
-            words[4][0],
-            words[4][1],
-            words[4][2],
-            words[4][3],
-            words[4][4],
-            words[4][5],
-            words[4][6],
-            words[4][7],
-            words[5][0],
-            words[5][1],
-            words[5][2],
-            words[5][3],
-            words[5][4],
-            words[5][5],
-            words[5][6],
-            words[5][7],
-            words[6][0],
-            words[6][1],
-            words[6][2],
-            words[6][3],
-            words[6][4],
-            words[6][5],
-            words[6][6],
-            words[6][7],
-            words[7][0],
-            words[7][1],
-            words[7][2],
-            words[7][3],
-            words[7][4],
-            words[7][5],
-            words[7][6],
-            words[7][7],
-        ]
+        unsafe { std::mem::transmute::<[[u8; 8]; 8], [u8; 64]>(words) }
     }
 
     /// Returns a copy of the number as little endian bytes.
@@ -233,78 +168,24 @@ impl Uint512 {
             (self.0).0[6].to_le_bytes(),
             (self.0).0[7].to_le_bytes(),
         ];
-
-        // In Rust 1.56+ we can use `unsafe { std::mem::transmute::<[[u8; 8]; 8], [u8; 64]>(words) }` for this
-        [
-            words[0][0],
-            words[0][1],
-            words[0][2],
-            words[0][3],
-            words[0][4],
-            words[0][5],
-            words[0][6],
-            words[0][7],
-            words[1][0],
-            words[1][1],
-            words[1][2],
-            words[1][3],
-            words[1][4],
-            words[1][5],
-            words[1][6],
-            words[1][7],
-            words[2][0],
-            words[2][1],
-            words[2][2],
-            words[2][3],
-            words[2][4],
-            words[2][5],
-            words[2][6],
-            words[2][7],
-            words[3][0],
-            words[3][1],
-            words[3][2],
-            words[3][3],
-            words[3][4],
-            words[3][5],
-            words[3][6],
-            words[3][7],
-            words[4][0],
-            words[4][1],
-            words[4][2],
-            words[4][3],
-            words[4][4],
-            words[4][5],
-            words[4][6],
-            words[4][7],
-            words[5][0],
-            words[5][1],
-            words[5][2],
-            words[5][3],
-            words[5][4],
-            words[5][5],
-            words[5][6],
-            words[5][7],
-            words[6][0],
-            words[6][1],
-            words[6][2],
-            words[6][3],
-            words[6][4],
-            words[6][5],
-            words[6][6],
-            words[6][7],
-            words[7][0],
-            words[7][1],
-            words[7][2],
-            words[7][3],
-            words[7][4],
-            words[7][5],
-            words[7][6],
-            words[7][7],
-        ]
+        unsafe { std::mem::transmute::<[[u8; 8]; 8], [u8; 64]>(words) }
     }
 
-    pub fn is_zero(&self) -> bool {
-        self.0.is_zero()
+    pub const fn is_zero(&self) -> bool {
+        let words = (self.0).0;
+        words[0] == 0
+            && words[1] == 0
+            && words[2] == 0
+            && words[3] == 0
+            && words[4] == 0
+            && words[5] == 0
+            && words[6] == 0
+            && words[7] == 0
+    }
+
+    pub fn pow(self, exp: u32) -> Self {
+        let res = self.0.pow(exp.into());
+        Self(res)
     }
 
     pub fn checked_add(self, other: Self) -> Result<Self, OverflowError> {
@@ -326,6 +207,13 @@ impl Uint512 {
             .checked_mul(other.0)
             .map(Self)
             .ok_or_else(|| OverflowError::new(OverflowOperation::Mul, self, other))
+    }
+
+    pub fn checked_pow(self, exp: u32) -> Result<Self, OverflowError> {
+        self.0
+            .checked_pow(exp.into())
+            .map(Self)
+            .ok_or_else(|| OverflowError::new(OverflowOperation::Pow, self, exp))
     }
 
     pub fn checked_div(self, other: Self) -> Result<Self, DivideByZeroError> {
@@ -477,7 +365,7 @@ impl fmt::Display for Uint512 {
     }
 }
 
-impl ops::Add<Uint512> for Uint512 {
+impl Add<Uint512> for Uint512 {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self {
@@ -485,7 +373,7 @@ impl ops::Add<Uint512> for Uint512 {
     }
 }
 
-impl<'a> ops::Add<&'a Uint512> for Uint512 {
+impl<'a> Add<&'a Uint512> for Uint512 {
     type Output = Self;
 
     fn add(self, rhs: &'a Uint512) -> Self {
@@ -493,23 +381,23 @@ impl<'a> ops::Add<&'a Uint512> for Uint512 {
     }
 }
 
-impl ops::Sub<Uint512> for Uint512 {
+impl Sub<Uint512> for Uint512 {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self {
         Uint512(self.0.checked_sub(rhs.0).unwrap())
     }
 }
+forward_ref_binop!(impl Sub, sub for Uint512, Uint512);
 
-impl<'a> ops::Sub<&'a Uint512> for Uint512 {
-    type Output = Self;
-
-    fn sub(self, rhs: &'a Uint512) -> Self {
-        Uint512(self.0.checked_sub(rhs.0).unwrap())
+impl SubAssign<Uint512> for Uint512 {
+    fn sub_assign(&mut self, rhs: Uint512) {
+        self.0 = self.0.checked_sub(rhs.0).unwrap();
     }
 }
+forward_ref_op_assign!(impl SubAssign, sub_assign for Uint512, Uint512);
 
-impl ops::Div<Uint512> for Uint512 {
+impl Div<Uint512> for Uint512 {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -517,7 +405,7 @@ impl ops::Div<Uint512> for Uint512 {
     }
 }
 
-impl<'a> ops::Div<&'a Uint512> for Uint512 {
+impl<'a> Div<&'a Uint512> for Uint512 {
     type Output = Self;
 
     fn div(self, rhs: &'a Uint512) -> Self::Output {
@@ -525,23 +413,43 @@ impl<'a> ops::Div<&'a Uint512> for Uint512 {
     }
 }
 
-impl ops::Mul<Uint512> for Uint512 {
+impl Rem for Uint512 {
+    type Output = Self;
+
+    /// # Panics
+    ///
+    /// This operation will panic if `rhs` is zero.
+    #[inline]
+    fn rem(self, rhs: Self) -> Self {
+        Self(self.0.rem(rhs.0))
+    }
+}
+forward_ref_binop!(impl Rem, rem for Uint512, Uint512);
+
+impl RemAssign<Uint512> for Uint512 {
+    fn rem_assign(&mut self, rhs: Uint512) {
+        *self = *self % rhs;
+    }
+}
+forward_ref_op_assign!(impl RemAssign, rem_assign for Uint512, Uint512);
+
+impl Mul<Uint512> for Uint512 {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
         Self(self.0.checked_mul(rhs.0).unwrap())
     }
 }
+forward_ref_binop!(impl Mul, mul for Uint512, Uint512);
 
-impl<'a> ops::Mul<&'a Uint512> for Uint512 {
-    type Output = Self;
-
-    fn mul(self, rhs: &'a Uint512) -> Self::Output {
-        Self(self.0.checked_mul(rhs.0).unwrap())
+impl MulAssign<Uint512> for Uint512 {
+    fn mul_assign(&mut self, rhs: Self) {
+        self.0 = self.0.checked_mul(rhs.0).unwrap();
     }
 }
+forward_ref_op_assign!(impl MulAssign, mul_assign for Uint512, Uint512);
 
-impl ops::Shr<u32> for Uint512 {
+impl Shr<u32> for Uint512 {
     type Output = Self;
 
     fn shr(self, rhs: u32) -> Self::Output {
@@ -554,7 +462,7 @@ impl ops::Shr<u32> for Uint512 {
     }
 }
 
-impl<'a> ops::Shr<&'a u32> for Uint512 {
+impl<'a> Shr<&'a u32> for Uint512 {
     type Output = Self;
 
     fn shr(self, rhs: &'a u32) -> Self::Output {
@@ -562,61 +470,37 @@ impl<'a> ops::Shr<&'a u32> for Uint512 {
     }
 }
 
-impl ops::AddAssign<Uint512> for Uint512 {
+impl AddAssign<Uint512> for Uint512 {
     fn add_assign(&mut self, rhs: Uint512) {
         self.0 = self.0.checked_add(rhs.0).unwrap();
     }
 }
 
-impl<'a> ops::AddAssign<&'a Uint512> for Uint512 {
+impl<'a> AddAssign<&'a Uint512> for Uint512 {
     fn add_assign(&mut self, rhs: &'a Uint512) {
         self.0 = self.0.checked_add(rhs.0).unwrap();
     }
 }
 
-impl ops::SubAssign<Uint512> for Uint512 {
-    fn sub_assign(&mut self, rhs: Uint512) {
-        self.0 = self.0.checked_sub(rhs.0).unwrap();
-    }
-}
-
-impl<'a> ops::SubAssign<&'a Uint512> for Uint512 {
-    fn sub_assign(&mut self, rhs: &'a Uint512) {
-        self.0 = self.0.checked_sub(rhs.0).unwrap();
-    }
-}
-
-impl ops::DivAssign<Uint512> for Uint512 {
+impl DivAssign<Uint512> for Uint512 {
     fn div_assign(&mut self, rhs: Self) {
         self.0 = self.0.checked_div(rhs.0).unwrap();
     }
 }
 
-impl<'a> ops::DivAssign<&'a Uint512> for Uint512 {
+impl<'a> DivAssign<&'a Uint512> for Uint512 {
     fn div_assign(&mut self, rhs: &'a Uint512) {
         self.0 = self.0.checked_div(rhs.0).unwrap();
     }
 }
 
-impl ops::MulAssign<Uint512> for Uint512 {
-    fn mul_assign(&mut self, rhs: Self) {
-        self.0 = self.0.checked_mul(rhs.0).unwrap();
-    }
-}
-
-impl<'a> ops::MulAssign<&'a Uint512> for Uint512 {
-    fn mul_assign(&mut self, rhs: &'a Uint512) {
-        self.0 = self.0.checked_mul(rhs.0).unwrap();
-    }
-}
-
-impl ops::ShrAssign<u32> for Uint512 {
+impl ShrAssign<u32> for Uint512 {
     fn shr_assign(&mut self, rhs: u32) {
         *self = Shr::<u32>::shr(*self, rhs);
     }
 }
 
-impl<'a> ops::ShrAssign<&'a u32> for Uint512 {
+impl<'a> ShrAssign<&'a u32> for Uint512 {
     fn shr_assign(&mut self, rhs: &'a u32) {
         *self = Shr::<u32>::shr(*self, *rhs);
     }
@@ -659,15 +543,12 @@ impl<'de> de::Visitor<'de> for Uint512Visitor {
     }
 }
 
-impl Sum<Uint512> for Uint512 {
-    fn sum<I: Iterator<Item = Uint512>>(iter: I) -> Self {
-        iter.fold(Uint512::zero(), ops::Add::add)
-    }
-}
-
-impl<'a> Sum<&'a Uint512> for Uint512 {
-    fn sum<I: Iterator<Item = &'a Uint512>>(iter: I) -> Self {
-        iter.fold(Uint512::zero(), ops::Add::add)
+impl<A> std::iter::Sum<A> for Uint512
+where
+    Self: Add<A, Output = Self>,
+{
+    fn sum<I: Iterator<Item = A>>(iter: I) -> Self {
+        iter.fold(Self::zero(), Add::add)
     }
 }
 
@@ -984,9 +865,93 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::op_ref)]
+    fn uint512_sub_works() {
+        assert_eq!(
+            Uint512::from(2u32) - Uint512::from(1u32),
+            Uint512::from(1u32)
+        );
+        assert_eq!(
+            Uint512::from(2u32) - Uint512::from(0u32),
+            Uint512::from(2u32)
+        );
+        assert_eq!(
+            Uint512::from(2u32) - Uint512::from(2u32),
+            Uint512::from(0u32)
+        );
+
+        // works for refs
+        let a = Uint512::from(10u32);
+        let b = Uint512::from(3u32);
+        let expected = Uint512::from(7u32);
+        assert_eq!(a - b, expected);
+        assert_eq!(a - &b, expected);
+        assert_eq!(&a - b, expected);
+        assert_eq!(&a - &b, expected);
+    }
+
+    #[test]
     #[should_panic]
     fn uint512_sub_overflow_panics() {
         let _ = Uint512::from(1u32) - Uint512::from(2u32);
+    }
+
+    #[test]
+    fn uint512_sub_assign_works() {
+        let mut a = Uint512::from(14u32);
+        a -= Uint512::from(2u32);
+        assert_eq!(a, Uint512::from(12u32));
+
+        // works for refs
+        let mut a = Uint512::from(10u32);
+        let b = Uint512::from(3u32);
+        let expected = Uint512::from(7u32);
+        a -= &b;
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint512_mul_works() {
+        assert_eq!(
+            Uint512::from(2u32) * Uint512::from(3u32),
+            Uint512::from(6u32)
+        );
+        assert_eq!(Uint512::from(2u32) * Uint512::zero(), Uint512::zero());
+
+        // works for refs
+        let a = Uint512::from(11u32);
+        let b = Uint512::from(3u32);
+        let expected = Uint512::from(33u32);
+        assert_eq!(a * b, expected);
+        assert_eq!(a * &b, expected);
+        assert_eq!(&a * b, expected);
+        assert_eq!(&a * &b, expected);
+    }
+
+    #[test]
+    fn uint512_mul_assign_works() {
+        let mut a = Uint512::from(14u32);
+        a *= Uint512::from(2u32);
+        assert_eq!(a, Uint512::from(28u32));
+
+        // works for refs
+        let mut a = Uint512::from(10u32);
+        let b = Uint512::from(3u32);
+        a *= &b;
+        assert_eq!(a, Uint512::from(30u32));
+    }
+
+    #[test]
+    fn uint512_pow_works() {
+        assert_eq!(Uint512::from(2u32).pow(2), Uint512::from(4u32));
+        assert_eq!(Uint512::from(2u32).pow(10), Uint512::from(1024u32));
+    }
+
+    #[test]
+    #[should_panic]
+    fn uint512_pow_overflow_panics() {
+        Uint512::MAX.pow(2u32);
     }
 
     #[test]
@@ -1038,18 +1003,42 @@ mod tests {
             Uint512::MAX.checked_add(Uint512::from(1u32)),
             Err(OverflowError { .. })
         ));
+        assert_eq!(
+            Uint512::from(1u32).checked_add(Uint512::from(1u32)),
+            Ok(Uint512::from(2u32)),
+        );
         assert!(matches!(
             Uint512::from(0u32).checked_sub(Uint512::from(1u32)),
             Err(OverflowError { .. })
         ));
+        assert_eq!(
+            Uint512::from(2u32).checked_sub(Uint512::from(1u32)),
+            Ok(Uint512::from(1u32)),
+        );
         assert!(matches!(
             Uint512::MAX.checked_mul(Uint512::from(2u32)),
             Err(OverflowError { .. })
         ));
+        assert_eq!(
+            Uint512::from(2u32).checked_mul(Uint512::from(2u32)),
+            Ok(Uint512::from(4u32)),
+        );
+        assert!(matches!(
+            Uint512::MAX.checked_pow(2u32),
+            Err(OverflowError { .. })
+        ));
+        assert_eq!(
+            Uint512::from(2u32).checked_pow(3u32),
+            Ok(Uint512::from(8u32)),
+        );
         assert!(matches!(
             Uint512::MAX.checked_div(Uint512::from(0u32)),
             Err(DivideByZeroError { .. })
         ));
+        assert_eq!(
+            Uint512::from(6u32).checked_div(Uint512::from(2u32)),
+            Ok(Uint512::from(3u32)),
+        );
         assert!(matches!(
             Uint512::MAX.checked_rem(Uint512::from(0u32)),
             Err(DivideByZeroError { .. })
@@ -1068,5 +1057,63 @@ mod tests {
             Uint512::MAX.saturating_mul(Uint512::from(2u32)),
             Uint512::MAX
         );
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint512_implements_rem() {
+        let a = Uint512::from(10u32);
+        assert_eq!(a % Uint512::from(10u32), Uint512::zero());
+        assert_eq!(a % Uint512::from(2u32), Uint512::zero());
+        assert_eq!(a % Uint512::from(1u32), Uint512::zero());
+        assert_eq!(a % Uint512::from(3u32), Uint512::from(1u32));
+        assert_eq!(a % Uint512::from(4u32), Uint512::from(2u32));
+
+        // works for refs
+        let a = Uint512::from(10u32);
+        let b = Uint512::from(3u32);
+        let expected = Uint512::from(1u32);
+        assert_eq!(a % b, expected);
+        assert_eq!(a % &b, expected);
+        assert_eq!(&a % b, expected);
+        assert_eq!(&a % &b, expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "division by zero")]
+    fn uint512_rem_panics_for_zero() {
+        let _ = Uint512::from(10u32) % Uint512::zero();
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint512_rem_works() {
+        assert_eq!(
+            Uint512::from(12u32) % Uint512::from(10u32),
+            Uint512::from(2u32)
+        );
+        assert_eq!(Uint512::from(50u32) % Uint512::from(5u32), Uint512::zero());
+
+        // works for refs
+        let a = Uint512::from(42u32);
+        let b = Uint512::from(5u32);
+        let expected = Uint512::from(2u32);
+        assert_eq!(a % b, expected);
+        assert_eq!(a % &b, expected);
+        assert_eq!(&a % b, expected);
+        assert_eq!(&a % &b, expected);
+    }
+
+    #[test]
+    fn uint512_rem_assign_works() {
+        let mut a = Uint512::from(30u32);
+        a %= Uint512::from(4u32);
+        assert_eq!(a, Uint512::from(2u32));
+
+        // works for refs
+        let mut a = Uint512::from(25u32);
+        let b = Uint512::from(6u32);
+        a %= &b;
+        assert_eq!(a, Uint512::from(1u32));
     }
 }

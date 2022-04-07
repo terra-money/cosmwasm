@@ -1,14 +1,15 @@
+use forward_ref::{forward_ref_binop, forward_ref_op_assign};
 use schemars::JsonSchema;
 use serde::{de, ser, Deserialize, Deserializer, Serialize};
 use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::fmt::{self, Write};
-use std::ops;
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use std::str::FromStr;
 use thiserror::Error;
 
 use crate::errors::StdError;
-use crate::Uint512;
+use crate::{OverflowError, Uint512};
 
 use super::Fraction;
 use super::Isqrt;
@@ -40,6 +41,18 @@ impl Decimal256 {
         ]);
 
     pub const MAX: Self = Self(Uint256::MAX);
+
+    /// Creates a Decimal256 from Uint256
+    /// This is equivalent to `Decimal256::from_atomics(value, 18)` but usable in a const context.
+    pub const fn new(value: Uint256) -> Self {
+        Self(value)
+    }
+
+    /// Creates a Decimal256 from u128
+    /// This is equivalent to `Decimal256::from_atomics(value, 18)` but usable in a const context.
+    pub const fn raw(value: u128) -> Self {
+        Self(Uint256::from_u128(value))
+    }
 
     /// Create a 1.0 Decimal256
     pub const fn one() -> Self {
@@ -130,7 +143,7 @@ impl Decimal256 {
         )
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
 
@@ -152,7 +165,7 @@ impl Decimal256 {
     /// assert_eq!(b.decimal_places(), 18);
     /// assert_eq!(b.atomics(), Uint256::from(1u128));
     /// ```
-    pub fn atomics(&self) -> Uint256 {
+    pub const fn atomics(&self) -> Uint256 {
         self.0
     }
 
@@ -160,8 +173,55 @@ impl Decimal256 {
     /// but this could potentially change as the type evolves.
     ///
     /// See also [`Decimal256::atomics()`].
-    pub fn decimal_places(&self) -> u32 {
+    pub const fn decimal_places(&self) -> u32 {
         Self::DECIMAL_PLACES as u32
+    }
+
+    /// Multiplies one `Decimal256` by another, returning an `OverflowError` if an overflow occurred.
+    pub fn checked_mul(self, other: Self) -> Result<Self, OverflowError> {
+        let result_as_uint512 = self.numerator().full_mul(other.numerator())
+            / Uint512::from_uint256(Self::DECIMAL_FRACTIONAL); // from_uint128 is a const method and should be "free"
+        result_as_uint512
+            .try_into()
+            .map(Self)
+            .map_err(|_| OverflowError {
+                operation: crate::OverflowOperation::Mul,
+                operand1: self.to_string(),
+                operand2: other.to_string(),
+            })
+    }
+
+    /// Raises a value to the power of `exp`, returning an `OverflowError` if an overflow occurred.
+    pub fn checked_pow(self, exp: u32) -> Result<Self, OverflowError> {
+        // This uses the exponentiation by squaring algorithm:
+        // https://en.wikipedia.org/wiki/Exponentiation_by_squaring#Basic_method
+
+        fn inner(mut x: Decimal256, mut n: u32) -> Result<Decimal256, OverflowError> {
+            if n == 0 {
+                return Ok(Decimal256::one());
+            }
+
+            let mut y = Decimal256::one();
+
+            while n > 1 {
+                if n % 2 == 0 {
+                    x = x.checked_mul(x)?;
+                    n /= 2;
+                } else {
+                    y = x.checked_mul(y)?;
+                    x = x.checked_mul(x)?;
+                    n = (n - 1) / 2;
+                }
+            }
+
+            Ok(x * y)
+        }
+
+        inner(self, exp).map_err(|_| OverflowError {
+            operation: crate::OverflowOperation::Pow,
+            operand1: self.to_string(),
+            operand2: exp.to_string(),
+        })
     }
 
     /// Returns the approximate square root as a Decimal256.
@@ -291,31 +351,39 @@ impl fmt::Display for Decimal256 {
     }
 }
 
-impl ops::Add for Decimal256 {
+impl Add for Decimal256 {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
         Self(self.0 + other.0)
     }
 }
+forward_ref_binop!(impl Add, add for Decimal256, Decimal256);
 
-impl ops::Add<&Decimal256> for Decimal256 {
-    type Output = Self;
-
-    fn add(self, other: &Decimal256) -> Self {
-        Self(self.0 + other.0)
+impl AddAssign for Decimal256 {
+    fn add_assign(&mut self, rhs: Decimal256) {
+        *self = *self + rhs;
     }
 }
+forward_ref_op_assign!(impl AddAssign, add_assign for Decimal256, Decimal256);
 
-impl ops::Sub for Decimal256 {
+impl Sub for Decimal256 {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self {
         Self(self.0 - other.0)
     }
 }
+forward_ref_binop!(impl Sub, sub for Decimal256, Decimal256);
 
-impl ops::Mul for Decimal256 {
+impl SubAssign for Decimal256 {
+    fn sub_assign(&mut self, rhs: Decimal256) {
+        *self = *self - rhs;
+    }
+}
+forward_ref_op_assign!(impl SubAssign, sub_assign for Decimal256, Decimal256);
+
+impl Mul for Decimal256 {
     type Output = Self;
 
     #[allow(clippy::suspicious_arithmetic_impl)]
@@ -333,11 +401,19 @@ impl ops::Mul for Decimal256 {
         }
     }
 }
+forward_ref_binop!(impl Mul, mul for Decimal256, Decimal256);
+
+impl MulAssign for Decimal256 {
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+forward_ref_op_assign!(impl MulAssign, mul_assign for Decimal256, Decimal256);
 
 /// Both d*u and u*d with d: Decimal256 and u: Uint256 returns an Uint256. There is no
 /// specific reason for this decision other than the initial use cases we have. If you
 /// need a Decimal256 result for the same calculation, use Decimal256(d*u) or Decimal256(u*d).
-impl ops::Mul<Decimal256> for Uint256 {
+impl Mul<Decimal256> for Uint256 {
     type Output = Self;
 
     #[allow(clippy::suspicious_arithmetic_impl)]
@@ -350,7 +426,7 @@ impl ops::Mul<Decimal256> for Uint256 {
     }
 }
 
-impl ops::Mul<Uint256> for Decimal256 {
+impl Mul<Uint256> for Decimal256 {
     type Output = Uint256;
 
     fn mul(self, rhs: Uint256) -> Self::Output {
@@ -358,7 +434,7 @@ impl ops::Mul<Uint256> for Decimal256 {
     }
 }
 
-impl ops::Div<Uint256> for Decimal256 {
+impl Div<Uint256> for Decimal256 {
     type Output = Self;
 
     fn div(self, rhs: Uint256) -> Self::Output {
@@ -366,7 +442,7 @@ impl ops::Div<Uint256> for Decimal256 {
     }
 }
 
-impl ops::DivAssign<Uint256> for Decimal256 {
+impl DivAssign<Uint256> for Decimal256 {
     fn div_assign(&mut self, rhs: Uint256) {
         self.0 /= rhs;
     }
@@ -374,10 +450,10 @@ impl ops::DivAssign<Uint256> for Decimal256 {
 
 impl<A> std::iter::Sum<A> for Decimal256
 where
-    Decimal256: ops::Add<A, Output = Decimal256>,
+    Self: Add<A, Output = Self>,
 {
     fn sum<I: Iterator<Item = A>>(iter: I) -> Self {
-        iter.fold(Self::zero(), |a, b| a + b)
+        iter.fold(Self::zero(), Add::add)
     }
 }
 
@@ -426,6 +502,19 @@ mod tests {
     use super::*;
     use crate::errors::StdError;
     use crate::{from_slice, to_vec};
+
+    #[test]
+    fn decimal256_new() {
+        let expected = Uint256::from(300u128);
+        assert_eq!(Decimal256::new(expected).0, expected);
+    }
+
+    #[test]
+    fn decimal256_raw() {
+        let value = 300u128;
+        let expected = Uint256::from(value);
+        assert_eq!(Decimal256::raw(value).0, expected);
+    }
 
     #[test]
     fn decimal256_one() {
@@ -890,12 +979,32 @@ mod tests {
     }
 
     #[test]
-    fn decimal256_add() {
+    #[allow(clippy::op_ref)]
+    fn decimal256_add_works() {
         let value = Decimal256::one() + Decimal256::percent(50); // 1.5
         assert_eq!(
             value.0,
             Decimal256::DECIMAL_FRACTIONAL * Uint256::from(3u8) / Uint256::from(2u8)
         );
+
+        assert_eq!(
+            Decimal256::percent(5) + Decimal256::percent(4),
+            Decimal256::percent(9)
+        );
+        assert_eq!(
+            Decimal256::percent(5) + Decimal256::zero(),
+            Decimal256::percent(5)
+        );
+        assert_eq!(Decimal256::zero() + Decimal256::zero(), Decimal256::zero());
+
+        // works for refs
+        let a = Decimal256::percent(15);
+        let b = Decimal256::percent(25);
+        let expected = Decimal256::percent(40);
+        assert_eq!(a + b, expected);
+        assert_eq!(&a + b, expected);
+        assert_eq!(a + &b, expected);
+        assert_eq!(&a + &b, expected);
     }
 
     #[test]
@@ -905,9 +1014,47 @@ mod tests {
     }
 
     #[test]
-    fn decimal256_sub() {
+    fn decimal256_add_assign_works() {
+        let mut a = Decimal256::percent(30);
+        a += Decimal256::percent(20);
+        assert_eq!(a, Decimal256::percent(50));
+
+        // works for refs
+        let mut a = Decimal256::percent(15);
+        let b = Decimal256::percent(3);
+        let expected = Decimal256::percent(18);
+        a += &b;
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn decimal256_sub_works() {
         let value = Decimal256::one() - Decimal256::percent(50); // 0.5
         assert_eq!(value.0, Decimal256::DECIMAL_FRACTIONAL / Uint256::from(2u8));
+
+        assert_eq!(
+            Decimal256::percent(9) - Decimal256::percent(4),
+            Decimal256::percent(5)
+        );
+        assert_eq!(
+            Decimal256::percent(16) - Decimal256::zero(),
+            Decimal256::percent(16)
+        );
+        assert_eq!(
+            Decimal256::percent(16) - Decimal256::percent(16),
+            Decimal256::zero()
+        );
+        assert_eq!(Decimal256::zero() - Decimal256::zero(), Decimal256::zero());
+
+        // works for refs
+        let a = Decimal256::percent(13);
+        let b = Decimal256::percent(6);
+        let expected = Decimal256::percent(7);
+        assert_eq!(a - b, expected);
+        assert_eq!(&a - b, expected);
+        assert_eq!(a - &b, expected);
+        assert_eq!(&a - &b, expected);
     }
 
     #[test]
@@ -917,6 +1064,21 @@ mod tests {
     }
 
     #[test]
+    fn decimal256_sub_assign_works() {
+        let mut a = Decimal256::percent(20);
+        a -= Decimal256::percent(2);
+        assert_eq!(a, Decimal256::percent(18));
+
+        // works for refs
+        let mut a = Decimal256::percent(33);
+        let b = Decimal256::percent(13);
+        let expected = Decimal256::percent(20);
+        a -= &b;
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
     fn decimal256_implements_mul() {
         let one = Decimal256::one();
         let two = one + one;
@@ -1023,12 +1185,65 @@ mod tests {
             max * dec("0.000000000000000001"),
             dec("115792089237316195423570985008687907853269.984665640564039457")
         );
+
+        // works for refs
+        let a = Decimal256::percent(20);
+        let b = Decimal256::percent(30);
+        let expected = Decimal256::percent(6);
+        assert_eq!(a * b, expected);
+        assert_eq!(&a * b, expected);
+        assert_eq!(a * &b, expected);
+        assert_eq!(&a * &b, expected);
+    }
+
+    #[test]
+    fn decimal256_mul_assign_works() {
+        let mut a = Decimal256::percent(15);
+        a *= Decimal256::percent(60);
+        assert_eq!(a, Decimal256::percent(9));
+
+        // works for refs
+        let mut a = Decimal256::percent(50);
+        let b = Decimal256::percent(20);
+        a *= &b;
+        assert_eq!(a, Decimal256::percent(10));
     }
 
     #[test]
     #[should_panic(expected = "attempt to multiply with overflow")]
     fn decimal256_mul_overflow_panics() {
         let _value = Decimal256::MAX * Decimal256::percent(101);
+    }
+
+    #[test]
+    fn decimal256_checked_mul() {
+        let test_data = [
+            (Decimal256::zero(), Decimal256::zero()),
+            (Decimal256::zero(), Decimal256::one()),
+            (Decimal256::one(), Decimal256::zero()),
+            (Decimal256::percent(10), Decimal256::zero()),
+            (Decimal256::percent(10), Decimal256::percent(5)),
+            (Decimal256::MAX, Decimal256::one()),
+            (Decimal256::MAX / 2u128.into(), Decimal256::percent(200)),
+            (Decimal256::permille(6), Decimal256::permille(13)),
+        ];
+
+        // The regular std::ops::Mul is our source of truth for these tests.
+        for (x, y) in test_data.iter().cloned() {
+            assert_eq!(x * y, x.checked_mul(y).unwrap());
+        }
+    }
+
+    #[test]
+    fn decimal256_checked_mul_overflow() {
+        assert_eq!(
+            Decimal256::MAX.checked_mul(Decimal256::percent(200)),
+            Err(OverflowError {
+                operation: crate::OverflowOperation::Mul,
+                operand1: Decimal256::MAX.to_string(),
+                operand2: Decimal256::percent(200).to_string(),
+            })
+        );
     }
 
     #[test]
@@ -1148,6 +1363,100 @@ mod tests {
             // we use. Larger numbers will cause less precision.
             // https://www.wolframalpha.com/input/?i=sqrt%2840000000000000000000000000000000000000000000000001%29
             Decimal256::from_str("6324555320336758663997787.088865437067400000").unwrap()
+        );
+    }
+
+    #[test]
+    fn decimal256_checked_pow() {
+        for exp in 0..10 {
+            assert_eq!(
+                Decimal256::one().checked_pow(exp).unwrap(),
+                Decimal256::one()
+            );
+        }
+
+        // This case is mathematically undefined but we ensure consistency with Rust stdandard types
+        // https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=20df6716048e77087acd40194b233494
+        assert_eq!(
+            Decimal256::zero().checked_pow(0).unwrap(),
+            Decimal256::one()
+        );
+
+        for exp in 1..10 {
+            assert_eq!(
+                Decimal256::zero().checked_pow(exp).unwrap(),
+                Decimal256::zero()
+            );
+        }
+
+        for num in &[
+            Decimal256::percent(50),
+            Decimal256::percent(99),
+            Decimal256::percent(200),
+        ] {
+            assert_eq!(num.checked_pow(0).unwrap(), Decimal256::one())
+        }
+
+        assert_eq!(
+            Decimal256::percent(20).checked_pow(2).unwrap(),
+            Decimal256::percent(4)
+        );
+
+        assert_eq!(
+            Decimal256::percent(20).checked_pow(3).unwrap(),
+            Decimal256::permille(8)
+        );
+
+        assert_eq!(
+            Decimal256::percent(200).checked_pow(4).unwrap(),
+            Decimal256::percent(1600)
+        );
+
+        assert_eq!(
+            Decimal256::percent(200).checked_pow(4).unwrap(),
+            Decimal256::percent(1600)
+        );
+
+        assert_eq!(
+            Decimal256::percent(700).checked_pow(5).unwrap(),
+            Decimal256::percent(1680700)
+        );
+
+        assert_eq!(
+            Decimal256::percent(700).checked_pow(8).unwrap(),
+            Decimal256::percent(576480100)
+        );
+
+        assert_eq!(
+            Decimal256::percent(700).checked_pow(10).unwrap(),
+            Decimal256::percent(28247524900)
+        );
+
+        assert_eq!(
+            Decimal256::percent(120).checked_pow(123).unwrap(),
+            Decimal256(5486473221892422150877397607u128.into())
+        );
+
+        assert_eq!(
+            Decimal256::percent(10).checked_pow(2).unwrap(),
+            Decimal256(10000000000000000u128.into())
+        );
+
+        assert_eq!(
+            Decimal256::percent(10).checked_pow(18).unwrap(),
+            Decimal256(1u128.into())
+        );
+    }
+
+    #[test]
+    fn decimal256_checked_pow_overflow() {
+        assert_eq!(
+            Decimal256::MAX.checked_pow(2),
+            Err(OverflowError {
+                operation: crate::OverflowOperation::Pow,
+                operand1: Decimal256::MAX.to_string(),
+                operand2: "2".to_string(),
+            })
         );
     }
 

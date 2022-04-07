@@ -1,9 +1,12 @@
+use forward_ref::{forward_ref_binop, forward_ref_op_assign};
 use schemars::JsonSchema;
 use serde::{de, ser, Deserialize, Deserializer, Serialize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
-use std::iter::Sum;
-use std::ops::{self, Shl, Shr};
+use std::ops::{
+    Add, AddAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Shl, Shr, ShrAssign, Sub,
+    SubAssign,
+};
 use std::str::FromStr;
 
 use crate::errors::{
@@ -99,9 +102,9 @@ impl Uint256 {
         Uint256(U256(words))
     }
 
-    /// A conversion from `Uint128` that, unlike the one provided by the `From` trait,
+    /// A conversion from `u128` that, unlike the one provided by the `From` trait,
     /// can be used in a `const` context.
-    pub const fn from_uint128(num: Uint128) -> Self {
+    pub const fn from_u128(num: u128) -> Self {
         let bytes = num.to_le_bytes();
 
         Self::from_le_bytes([
@@ -109,6 +112,12 @@ impl Uint256 {
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ])
+    }
+
+    /// A conversion from `Uint128` that, unlike the one provided by the `From` trait,
+    /// can be used in a `const` context.
+    pub const fn from_uint128(num: Uint128) -> Self {
+        Self::from_u128(num.u128())
     }
 
     /// Returns a copy of the number as big endian bytes.
@@ -119,42 +128,7 @@ impl Uint256 {
             (self.0).0[1].to_be_bytes(),
             (self.0).0[0].to_be_bytes(),
         ];
-
-        // In Rust 1.56+ we can use `unsafe { std::mem::transmute::<[[u8; 8]; 4], [u8; 32]>(words) }` for this
-        [
-            words[0][0],
-            words[0][1],
-            words[0][2],
-            words[0][3],
-            words[0][4],
-            words[0][5],
-            words[0][6],
-            words[0][7],
-            words[1][0],
-            words[1][1],
-            words[1][2],
-            words[1][3],
-            words[1][4],
-            words[1][5],
-            words[1][6],
-            words[1][7],
-            words[2][0],
-            words[2][1],
-            words[2][2],
-            words[2][3],
-            words[2][4],
-            words[2][5],
-            words[2][6],
-            words[2][7],
-            words[3][0],
-            words[3][1],
-            words[3][2],
-            words[3][3],
-            words[3][4],
-            words[3][5],
-            words[3][6],
-            words[3][7],
-        ]
+        unsafe { std::mem::transmute::<[[u8; 8]; 4], [u8; 32]>(words) }
     }
 
     /// Returns a copy of the number as little endian bytes.
@@ -165,46 +139,17 @@ impl Uint256 {
             (self.0).0[2].to_le_bytes(),
             (self.0).0[3].to_le_bytes(),
         ];
-
-        // In Rust 1.56+ we can use `unsafe { std::mem::transmute::<[[u8; 8]; 4], [u8; 32]>(words) }` for this
-        [
-            words[0][0],
-            words[0][1],
-            words[0][2],
-            words[0][3],
-            words[0][4],
-            words[0][5],
-            words[0][6],
-            words[0][7],
-            words[1][0],
-            words[1][1],
-            words[1][2],
-            words[1][3],
-            words[1][4],
-            words[1][5],
-            words[1][6],
-            words[1][7],
-            words[2][0],
-            words[2][1],
-            words[2][2],
-            words[2][3],
-            words[2][4],
-            words[2][5],
-            words[2][6],
-            words[2][7],
-            words[3][0],
-            words[3][1],
-            words[3][2],
-            words[3][3],
-            words[3][4],
-            words[3][5],
-            words[3][6],
-            words[3][7],
-        ]
+        unsafe { std::mem::transmute::<[[u8; 8]; 4], [u8; 32]>(words) }
     }
 
-    pub fn is_zero(&self) -> bool {
-        self.0.is_zero()
+    pub const fn is_zero(&self) -> bool {
+        let words = (self.0).0;
+        words[0] == 0 && words[1] == 0 && words[2] == 0 && words[3] == 0
+    }
+
+    pub fn pow(self, exp: u32) -> Self {
+        let res = self.0.pow(exp.into());
+        Self(res)
     }
 
     pub fn checked_add(self, other: Self) -> Result<Self, OverflowError> {
@@ -228,6 +173,13 @@ impl Uint256 {
             .ok_or_else(|| OverflowError::new(OverflowOperation::Mul, self, other))
     }
 
+    pub fn checked_pow(self, exp: u32) -> Result<Self, OverflowError> {
+        self.0
+            .checked_pow(exp.into())
+            .map(Self)
+            .ok_or_else(|| OverflowError::new(OverflowOperation::Pow, self, exp))
+    }
+
     pub fn checked_div(self, other: Self) -> Result<Self, DivideByZeroError> {
         self.0
             .checked_div(other.0)
@@ -240,18 +192,6 @@ impl Uint256 {
             .checked_rem(other.0)
             .map(Self)
             .ok_or_else(|| DivideByZeroError::new(self))
-    }
-
-    pub fn checked_pow(self, exp: u32) -> Result<Self, OverflowError> {
-        self.0
-            .checked_pow(exp.into())
-            .map(Self)
-            .ok_or_else(|| OverflowError::new(OverflowOperation::Pow, self, exp))
-    }
-
-    pub fn pow(self, exp: u32) -> Self {
-        self.checked_pow(exp)
-            .expect("attempt to raise to a power with overflow")
     }
 
     pub fn checked_shr(self, other: u32) -> Result<Self, OverflowError> {
@@ -374,7 +314,7 @@ impl fmt::Display for Uint256 {
     }
 }
 
-impl ops::Add<Uint256> for Uint256 {
+impl Add<Uint256> for Uint256 {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self {
@@ -386,7 +326,7 @@ impl ops::Add<Uint256> for Uint256 {
     }
 }
 
-impl<'a> ops::Add<&'a Uint256> for Uint256 {
+impl<'a> Add<&'a Uint256> for Uint256 {
     type Output = Self;
 
     fn add(self, rhs: &'a Uint256) -> Self {
@@ -394,7 +334,7 @@ impl<'a> ops::Add<&'a Uint256> for Uint256 {
     }
 }
 
-impl ops::Sub<Uint256> for Uint256 {
+impl Sub<Uint256> for Uint256 {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self {
@@ -405,16 +345,16 @@ impl ops::Sub<Uint256> for Uint256 {
         )
     }
 }
+forward_ref_binop!(impl Sub, sub for Uint256, Uint256);
 
-impl<'a> ops::Sub<&'a Uint256> for Uint256 {
-    type Output = Self;
-
-    fn sub(self, rhs: &'a Uint256) -> Self {
-        self - *rhs
+impl SubAssign<Uint256> for Uint256 {
+    fn sub_assign(&mut self, rhs: Uint256) {
+        *self = *self - rhs;
     }
 }
+forward_ref_op_assign!(impl SubAssign, sub_assign for Uint256, Uint256);
 
-impl ops::Div<Uint256> for Uint256 {
+impl Div<Uint256> for Uint256 {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -426,7 +366,7 @@ impl ops::Div<Uint256> for Uint256 {
     }
 }
 
-impl<'a> ops::Div<&'a Uint256> for Uint256 {
+impl<'a> Div<&'a Uint256> for Uint256 {
     type Output = Self;
 
     fn div(self, rhs: &'a Uint256) -> Self::Output {
@@ -434,7 +374,27 @@ impl<'a> ops::Div<&'a Uint256> for Uint256 {
     }
 }
 
-impl ops::Mul<Uint256> for Uint256 {
+impl Rem for Uint256 {
+    type Output = Self;
+
+    /// # Panics
+    ///
+    /// This operation will panic if `rhs` is zero.
+    #[inline]
+    fn rem(self, rhs: Self) -> Self {
+        Self(self.0.rem(rhs.0))
+    }
+}
+forward_ref_binop!(impl Rem, rem for Uint256, Uint256);
+
+impl RemAssign<Uint256> for Uint256 {
+    fn rem_assign(&mut self, rhs: Uint256) {
+        *self = *self % rhs;
+    }
+}
+forward_ref_op_assign!(impl RemAssign, rem_assign for Uint256, Uint256);
+
+impl Mul<Uint256> for Uint256 {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -445,16 +405,16 @@ impl ops::Mul<Uint256> for Uint256 {
         )
     }
 }
+forward_ref_binop!(impl Mul, mul for Uint256, Uint256);
 
-impl<'a> ops::Mul<&'a Uint256> for Uint256 {
-    type Output = Self;
-
-    fn mul(self, rhs: &'a Uint256) -> Self::Output {
-        self.mul(*rhs)
+impl MulAssign<Uint256> for Uint256 {
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
     }
 }
+forward_ref_op_assign!(impl MulAssign, mul_assign for Uint256, Uint256);
 
-impl ops::Shr<u32> for Uint256 {
+impl Shr<u32> for Uint256 {
     type Output = Self;
 
     fn shr(self, rhs: u32) -> Self::Output {
@@ -467,7 +427,7 @@ impl ops::Shr<u32> for Uint256 {
     }
 }
 
-impl<'a> ops::Shr<&'a u32> for Uint256 {
+impl<'a> Shr<&'a u32> for Uint256 {
     type Output = Self;
 
     fn shr(self, rhs: &'a u32) -> Self::Output {
@@ -475,7 +435,7 @@ impl<'a> ops::Shr<&'a u32> for Uint256 {
     }
 }
 
-impl ops::Shl<u32> for Uint256 {
+impl Shl<u32> for Uint256 {
     type Output = Self;
 
     fn shl(self, rhs: u32) -> Self::Output {
@@ -488,7 +448,7 @@ impl ops::Shl<u32> for Uint256 {
     }
 }
 
-impl<'a> ops::Shl<&'a u32> for Uint256 {
+impl<'a> Shl<&'a u32> for Uint256 {
     type Output = Self;
 
     fn shl(self, rhs: &'a u32) -> Self::Output {
@@ -496,61 +456,37 @@ impl<'a> ops::Shl<&'a u32> for Uint256 {
     }
 }
 
-impl ops::AddAssign<Uint256> for Uint256 {
+impl AddAssign<Uint256> for Uint256 {
     fn add_assign(&mut self, rhs: Uint256) {
         *self = *self + rhs;
     }
 }
 
-impl<'a> ops::AddAssign<&'a Uint256> for Uint256 {
+impl<'a> AddAssign<&'a Uint256> for Uint256 {
     fn add_assign(&mut self, rhs: &'a Uint256) {
         *self = *self + rhs;
     }
 }
 
-impl ops::SubAssign<Uint256> for Uint256 {
-    fn sub_assign(&mut self, rhs: Uint256) {
-        *self = *self - rhs;
-    }
-}
-
-impl<'a> ops::SubAssign<&'a Uint256> for Uint256 {
-    fn sub_assign(&mut self, rhs: &'a Uint256) {
-        *self = *self - rhs;
-    }
-}
-
-impl ops::MulAssign<Uint256> for Uint256 {
-    fn mul_assign(&mut self, rhs: Self) {
-        *self = *self * rhs;
-    }
-}
-
-impl<'a> ops::MulAssign<&'a Uint256> for Uint256 {
-    fn mul_assign(&mut self, rhs: &'a Uint256) {
-        *self = *self * rhs;
-    }
-}
-
-impl ops::DivAssign<Uint256> for Uint256 {
+impl DivAssign<Uint256> for Uint256 {
     fn div_assign(&mut self, rhs: Self) {
         *self = *self / rhs;
     }
 }
 
-impl<'a> ops::DivAssign<&'a Uint256> for Uint256 {
+impl<'a> DivAssign<&'a Uint256> for Uint256 {
     fn div_assign(&mut self, rhs: &'a Uint256) {
         *self = *self / rhs;
     }
 }
 
-impl ops::ShrAssign<u32> for Uint256 {
+impl ShrAssign<u32> for Uint256 {
     fn shr_assign(&mut self, rhs: u32) {
         *self = Shr::<u32>::shr(*self, rhs);
     }
 }
 
-impl<'a> ops::ShrAssign<&'a u32> for Uint256 {
+impl<'a> ShrAssign<&'a u32> for Uint256 {
     fn shr_assign(&mut self, rhs: &'a u32) {
         *self = Shr::<u32>::shr(*self, *rhs);
     }
@@ -632,15 +568,12 @@ impl<'de> de::Visitor<'de> for Uint256Visitor {
     }
 }
 
-impl Sum<Uint256> for Uint256 {
-    fn sum<I: Iterator<Item = Uint256>>(iter: I) -> Self {
-        iter.fold(Uint256::zero(), ops::Add::add)
-    }
-}
-
-impl<'a> Sum<&'a Uint256> for Uint256 {
-    fn sum<I: Iterator<Item = &'a Uint256>>(iter: I) -> Self {
-        iter.fold(Uint256::zero(), ops::Add::add)
+impl<A> std::iter::Sum<A> for Uint256
+where
+    Self: Add<A, Output = Self>,
+{
+    fn sum<I: Iterator<Item = A>>(iter: I) -> Self {
+        iter.fold(Self::zero(), Add::add)
     }
 }
 
@@ -1019,6 +952,19 @@ mod tests {
     }
 
     #[test]
+    fn uint256_from_u128() {
+        assert_eq!(
+            Uint256::from_u128(123u128),
+            Uint256::from_str("123").unwrap()
+        );
+
+        assert_eq!(
+            Uint256::from_u128(9785746283745u128),
+            Uint256::from_str("9785746283745").unwrap()
+        );
+    }
+
+    #[test]
     fn uint256_from_uint128() {
         assert_eq!(
             Uint256::from_uint128(Uint128::new(123)),
@@ -1212,9 +1158,93 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::op_ref)]
+    fn uint256_sub_works() {
+        assert_eq!(
+            Uint256::from(2u32) - Uint256::from(1u32),
+            Uint256::from(1u32)
+        );
+        assert_eq!(
+            Uint256::from(2u32) - Uint256::from(0u32),
+            Uint256::from(2u32)
+        );
+        assert_eq!(
+            Uint256::from(2u32) - Uint256::from(2u32),
+            Uint256::from(0u32)
+        );
+
+        // works for refs
+        let a = Uint256::from(10u32);
+        let b = Uint256::from(3u32);
+        let expected = Uint256::from(7u32);
+        assert_eq!(a - b, expected);
+        assert_eq!(a - &b, expected);
+        assert_eq!(&a - b, expected);
+        assert_eq!(&a - &b, expected);
+    }
+
+    #[test]
     #[should_panic]
     fn uint256_sub_overflow_panics() {
         let _ = Uint256::from(1u32) - Uint256::from(2u32);
+    }
+
+    #[test]
+    fn uint256_sub_assign_works() {
+        let mut a = Uint256::from(14u32);
+        a -= Uint256::from(2u32);
+        assert_eq!(a, Uint256::from(12u32));
+
+        // works for refs
+        let mut a = Uint256::from(10u32);
+        let b = Uint256::from(3u32);
+        let expected = Uint256::from(7u32);
+        a -= &b;
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint256_mul_works() {
+        assert_eq!(
+            Uint256::from(2u32) * Uint256::from(3u32),
+            Uint256::from(6u32)
+        );
+        assert_eq!(Uint256::from(2u32) * Uint256::zero(), Uint256::zero());
+
+        // works for refs
+        let a = Uint256::from(11u32);
+        let b = Uint256::from(3u32);
+        let expected = Uint256::from(33u32);
+        assert_eq!(a * b, expected);
+        assert_eq!(a * &b, expected);
+        assert_eq!(&a * b, expected);
+        assert_eq!(&a * &b, expected);
+    }
+
+    #[test]
+    fn uint256_mul_assign_works() {
+        let mut a = Uint256::from(14u32);
+        a *= Uint256::from(2u32);
+        assert_eq!(a, Uint256::from(28u32));
+
+        // works for refs
+        let mut a = Uint256::from(10u32);
+        let b = Uint256::from(3u32);
+        a *= &b;
+        assert_eq!(a, Uint256::from(30u32));
+    }
+
+    #[test]
+    fn uint256_pow_works() {
+        assert_eq!(Uint256::from(2u32).pow(2), Uint256::from(4u32));
+        assert_eq!(Uint256::from(2u32).pow(10), Uint256::from(1024u32));
+    }
+
+    #[test]
+    #[should_panic]
+    fn uint256_pow_overflow_panics() {
+        Uint256::MAX.pow(2u32);
     }
 
     #[test]
@@ -1314,18 +1344,42 @@ mod tests {
             Uint256::MAX.checked_add(Uint256::from(1u32)),
             Err(OverflowError { .. })
         ));
+        assert_eq!(
+            Uint256::from(1u32).checked_add(Uint256::from(1u32)),
+            Ok(Uint256::from(2u32)),
+        );
         assert!(matches!(
             Uint256::from(0u32).checked_sub(Uint256::from(1u32)),
             Err(OverflowError { .. })
         ));
+        assert_eq!(
+            Uint256::from(2u32).checked_sub(Uint256::from(1u32)),
+            Ok(Uint256::from(1u32)),
+        );
         assert!(matches!(
             Uint256::MAX.checked_mul(Uint256::from(2u32)),
             Err(OverflowError { .. })
         ));
+        assert_eq!(
+            Uint256::from(2u32).checked_mul(Uint256::from(2u32)),
+            Ok(Uint256::from(4u32)),
+        );
+        assert!(matches!(
+            Uint256::MAX.checked_pow(2u32),
+            Err(OverflowError { .. })
+        ));
+        assert_eq!(
+            Uint256::from(2u32).checked_pow(3u32),
+            Ok(Uint256::from(8u32)),
+        );
         assert!(matches!(
             Uint256::MAX.checked_div(Uint256::from(0u32)),
             Err(DivideByZeroError { .. })
         ));
+        assert_eq!(
+            Uint256::from(6u32).checked_div(Uint256::from(2u32)),
+            Ok(Uint256::from(3u32)),
+        );
         assert!(matches!(
             Uint256::MAX.checked_rem(Uint256::from(0u32)),
             Err(DivideByZeroError { .. })
@@ -1344,5 +1398,63 @@ mod tests {
             Uint256::MAX.saturating_mul(Uint256::from(2u32)),
             Uint256::MAX
         );
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint256_implements_rem() {
+        let a = Uint256::from(10u32);
+        assert_eq!(a % Uint256::from(10u32), Uint256::zero());
+        assert_eq!(a % Uint256::from(2u32), Uint256::zero());
+        assert_eq!(a % Uint256::from(1u32), Uint256::zero());
+        assert_eq!(a % Uint256::from(3u32), Uint256::from(1u32));
+        assert_eq!(a % Uint256::from(4u32), Uint256::from(2u32));
+
+        // works for refs
+        let a = Uint256::from(10u32);
+        let b = Uint256::from(3u32);
+        let expected = Uint256::from(1u32);
+        assert_eq!(a % b, expected);
+        assert_eq!(a % &b, expected);
+        assert_eq!(&a % b, expected);
+        assert_eq!(&a % &b, expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "division by zero")]
+    fn uint256_rem_panics_for_zero() {
+        let _ = Uint256::from(10u32) % Uint256::zero();
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint256_rem_works() {
+        assert_eq!(
+            Uint256::from(12u32) % Uint256::from(10u32),
+            Uint256::from(2u32)
+        );
+        assert_eq!(Uint256::from(50u32) % Uint256::from(5u32), Uint256::zero());
+
+        // works for refs
+        let a = Uint256::from(42u32);
+        let b = Uint256::from(5u32);
+        let expected = Uint256::from(2u32);
+        assert_eq!(a % b, expected);
+        assert_eq!(a % &b, expected);
+        assert_eq!(&a % b, expected);
+        assert_eq!(&a % &b, expected);
+    }
+
+    #[test]
+    fn uint256_rem_assign_works() {
+        let mut a = Uint256::from(30u32);
+        a %= Uint256::from(4u32);
+        assert_eq!(a, Uint256::from(2u32));
+
+        // works for refs
+        let mut a = Uint256::from(25u32);
+        let b = Uint256::from(6u32);
+        a %= &b;
+        assert_eq!(a, Uint256::from(1u32));
     }
 }

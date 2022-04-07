@@ -1,9 +1,11 @@
+use forward_ref::{forward_ref_binop, forward_ref_op_assign};
 use schemars::JsonSchema;
 use serde::{de, ser, Deserialize, Deserializer, Serialize};
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self};
-use std::iter::Sum;
-use std::ops;
+use std::ops::{
+    Add, AddAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Shr, ShrAssign, Sub, SubAssign,
+};
 
 use crate::errors::{DivideByZeroError, OverflowError, OverflowOperation, StdError};
 use crate::Uint128;
@@ -57,8 +59,12 @@ impl Uint64 {
         self.0.to_le_bytes()
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.0 == 0
+    }
+
+    pub fn pow(self, exp: u32) -> Self {
+        self.0.pow(exp).into()
     }
 
     pub fn checked_add(self, other: Self) -> Result<Self, OverflowError> {
@@ -80,6 +86,13 @@ impl Uint64 {
             .checked_mul(other.0)
             .map(Self)
             .ok_or_else(|| OverflowError::new(OverflowOperation::Mul, self, other))
+    }
+
+    pub fn checked_pow(self, exp: u32) -> Result<Self, OverflowError> {
+        self.0
+            .checked_pow(exp)
+            .map(Self)
+            .ok_or_else(|| OverflowError::new(OverflowOperation::Pow, self, exp))
     }
 
     pub fn checked_div(self, other: Self) -> Result<Self, DivideByZeroError> {
@@ -194,7 +207,7 @@ impl fmt::Display for Uint64 {
     }
 }
 
-impl ops::Add<Uint64> for Uint64 {
+impl Add<Uint64> for Uint64 {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self {
@@ -202,7 +215,7 @@ impl ops::Add<Uint64> for Uint64 {
     }
 }
 
-impl<'a> ops::Add<&'a Uint64> for Uint64 {
+impl<'a> Add<&'a Uint64> for Uint64 {
     type Output = Self;
 
     fn add(self, rhs: &'a Uint64) -> Self {
@@ -210,7 +223,47 @@ impl<'a> ops::Add<&'a Uint64> for Uint64 {
     }
 }
 
-impl ops::Div<Uint64> for Uint64 {
+impl Sub<Uint64> for Uint64 {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self {
+        Uint64(
+            self.u64()
+                .checked_sub(rhs.u64())
+                .expect("attempt to subtract with overflow"),
+        )
+    }
+}
+forward_ref_binop!(impl Sub, sub for Uint64, Uint64);
+
+impl SubAssign<Uint64> for Uint64 {
+    fn sub_assign(&mut self, rhs: Uint64) {
+        *self = *self - rhs;
+    }
+}
+forward_ref_op_assign!(impl SubAssign, sub_assign for Uint64, Uint64);
+
+impl Mul<Uint64> for Uint64 {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self(
+            self.u64()
+                .checked_mul(rhs.u64())
+                .expect("attempt to multiply with overflow"),
+        )
+    }
+}
+forward_ref_binop!(impl Mul, mul for Uint64, Uint64);
+
+impl MulAssign<Uint64> for Uint64 {
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+forward_ref_op_assign!(impl MulAssign, mul_assign for Uint64, Uint64);
+
+impl Div<Uint64> for Uint64 {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -218,7 +271,7 @@ impl ops::Div<Uint64> for Uint64 {
     }
 }
 
-impl<'a> ops::Div<&'a Uint64> for Uint64 {
+impl<'a> Div<&'a Uint64> for Uint64 {
     type Output = Self;
 
     fn div(self, rhs: &'a Uint64) -> Self::Output {
@@ -226,7 +279,27 @@ impl<'a> ops::Div<&'a Uint64> for Uint64 {
     }
 }
 
-impl ops::Shr<u32> for Uint64 {
+impl Rem for Uint64 {
+    type Output = Self;
+
+    /// # Panics
+    ///
+    /// This operation will panic if `rhs` is zero.
+    #[inline]
+    fn rem(self, rhs: Self) -> Self {
+        Self(self.0.rem(rhs.0))
+    }
+}
+forward_ref_binop!(impl Rem, rem for Uint64, Uint64);
+
+impl RemAssign<Uint64> for Uint64 {
+    fn rem_assign(&mut self, rhs: Uint64) {
+        *self = *self % rhs;
+    }
+}
+forward_ref_op_assign!(impl RemAssign, rem_assign for Uint64, Uint64);
+
+impl Shr<u32> for Uint64 {
     type Output = Self;
 
     fn shr(self, rhs: u32) -> Self::Output {
@@ -234,7 +307,7 @@ impl ops::Shr<u32> for Uint64 {
     }
 }
 
-impl<'a> ops::Shr<&'a u32> for Uint64 {
+impl<'a> Shr<&'a u32> for Uint64 {
     type Output = Self;
 
     fn shr(self, rhs: &'a u32) -> Self::Output {
@@ -242,37 +315,37 @@ impl<'a> ops::Shr<&'a u32> for Uint64 {
     }
 }
 
-impl ops::AddAssign<Uint64> for Uint64 {
+impl AddAssign<Uint64> for Uint64 {
     fn add_assign(&mut self, rhs: Uint64) {
         self.0 = self.0.checked_add(rhs.u64()).unwrap();
     }
 }
 
-impl<'a> ops::AddAssign<&'a Uint64> for Uint64 {
+impl<'a> AddAssign<&'a Uint64> for Uint64 {
     fn add_assign(&mut self, rhs: &'a Uint64) {
         self.0 = self.0.checked_add(rhs.u64()).unwrap();
     }
 }
 
-impl ops::DivAssign<Uint64> for Uint64 {
+impl DivAssign<Uint64> for Uint64 {
     fn div_assign(&mut self, rhs: Self) {
         self.0 = self.0.checked_div(rhs.u64()).unwrap();
     }
 }
 
-impl<'a> ops::DivAssign<&'a Uint64> for Uint64 {
+impl<'a> DivAssign<&'a Uint64> for Uint64 {
     fn div_assign(&mut self, rhs: &'a Uint64) {
         self.0 = self.0.checked_div(rhs.u64()).unwrap();
     }
 }
 
-impl ops::ShrAssign<u32> for Uint64 {
+impl ShrAssign<u32> for Uint64 {
     fn shr_assign(&mut self, rhs: u32) {
         self.0 = self.0.checked_shr(rhs).unwrap();
     }
 }
 
-impl<'a> ops::ShrAssign<&'a u32> for Uint64 {
+impl<'a> ShrAssign<&'a u32> for Uint64 {
     fn shr_assign(&mut self, rhs: &'a u32) {
         self.0 = self.0.checked_shr(*rhs).unwrap();
     }
@@ -355,15 +428,12 @@ impl<'de> de::Visitor<'de> for Uint64Visitor {
     }
 }
 
-impl Sum<Uint64> for Uint64 {
-    fn sum<I: Iterator<Item = Uint64>>(iter: I) -> Self {
-        iter.fold(Uint64::zero(), ops::Add::add)
-    }
-}
-
-impl<'a> Sum<&'a Uint64> for Uint64 {
-    fn sum<I: Iterator<Item = &'a Uint64>>(iter: I) -> Self {
-        iter.fold(Uint64::zero(), ops::Add::add)
+impl<A> std::iter::Sum<A> for Uint64
+where
+    Self: Add<A, Output = Self>,
+{
+    fn sum<I: Iterator<Item = A>>(iter: I) -> Self {
+        iter.fold(Self::zero(), Add::add)
     }
 }
 
@@ -509,6 +579,84 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::op_ref)]
+    fn uint64_sub_works() {
+        assert_eq!(Uint64(2) - Uint64(1), Uint64(1));
+        assert_eq!(Uint64(2) - Uint64(0), Uint64(2));
+        assert_eq!(Uint64(2) - Uint64(2), Uint64(0));
+
+        // works for refs
+        let a = Uint64::new(10);
+        let b = Uint64::new(3);
+        let expected = Uint64::new(7);
+        assert_eq!(a - b, expected);
+        assert_eq!(a - &b, expected);
+        assert_eq!(&a - b, expected);
+        assert_eq!(&a - &b, expected);
+    }
+
+    #[test]
+    #[should_panic]
+    fn uint64_sub_overflow_panics() {
+        let _ = Uint64(1) - Uint64(2);
+    }
+
+    #[test]
+    fn uint64_sub_assign_works() {
+        let mut a = Uint64(14);
+        a -= Uint64(2);
+        assert_eq!(a, Uint64(12));
+
+        // works for refs
+        let mut a = Uint64::new(10);
+        let b = Uint64::new(3);
+        let expected = Uint64::new(7);
+        a -= &b;
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint64_mul_works() {
+        assert_eq!(Uint64::from(2u32) * Uint64::from(3u32), Uint64::from(6u32));
+        assert_eq!(Uint64::from(2u32) * Uint64::zero(), Uint64::zero());
+
+        // works for refs
+        let a = Uint64::from(11u32);
+        let b = Uint64::from(3u32);
+        let expected = Uint64::from(33u32);
+        assert_eq!(a * b, expected);
+        assert_eq!(a * &b, expected);
+        assert_eq!(&a * b, expected);
+        assert_eq!(&a * &b, expected);
+    }
+
+    #[test]
+    fn uint64_mul_assign_works() {
+        let mut a = Uint64::from(14u32);
+        a *= Uint64::from(2u32);
+        assert_eq!(a, Uint64::from(28u32));
+
+        // works for refs
+        let mut a = Uint64::from(10u32);
+        let b = Uint64::from(3u32);
+        a *= &b;
+        assert_eq!(a, Uint64::from(30u32));
+    }
+
+    #[test]
+    fn uint64_pow_works() {
+        assert_eq!(Uint64::from(2u32).pow(2), Uint64::from(4u32));
+        assert_eq!(Uint64::from(2u32).pow(10), Uint64::from(1024u32));
+    }
+
+    #[test]
+    #[should_panic]
+    fn uint64_pow_overflow_panics() {
+        Uint64::MAX.pow(2u32);
+    }
+
+    #[test]
     #[should_panic]
     fn uint64_math_overflow_panics() {
         // almost_max is 2^64 - 10
@@ -578,43 +726,112 @@ mod tests {
     fn uint64_methods() {
         // checked_*
         assert!(matches!(
-            Uint64(u64::MAX).checked_add(Uint64(1)),
+            Uint64::MAX.checked_add(Uint64(1)),
             Err(OverflowError { .. })
         ));
+        assert!(matches!(Uint64(1).checked_add(Uint64(1)), Ok(Uint64(2))));
         assert!(matches!(
             Uint64(0).checked_sub(Uint64(1)),
             Err(OverflowError { .. })
         ));
+        assert!(matches!(Uint64(2).checked_sub(Uint64(1)), Ok(Uint64(1))));
         assert!(matches!(
-            Uint64(u64::MAX).checked_mul(Uint64(2)),
+            Uint64::MAX.checked_mul(Uint64(2)),
             Err(OverflowError { .. })
         ));
+        assert!(matches!(Uint64(2).checked_mul(Uint64(2)), Ok(Uint64(4))));
         assert!(matches!(
-            Uint64(u64::MAX).checked_div(Uint64(0)),
+            Uint64::MAX.checked_pow(2u32),
+            Err(OverflowError { .. })
+        ));
+        assert!(matches!(Uint64(2).checked_pow(3), Ok(Uint64(8))));
+        assert!(matches!(
+            Uint64::MAX.checked_div(Uint64(0)),
+            Err(DivideByZeroError { .. })
+        ));
+        assert!(matches!(Uint64(6).checked_div(Uint64(2)), Ok(Uint64(3))));
+        assert!(matches!(
+            Uint64::MAX.checked_div_euclid(Uint64(0)),
             Err(DivideByZeroError { .. })
         ));
         assert!(matches!(
-            Uint64(u64::MAX).checked_div_euclid(Uint64(0)),
-            Err(DivideByZeroError { .. })
+            Uint64(6).checked_div_euclid(Uint64(2)),
+            Ok(Uint64(3)),
         ));
         assert!(matches!(
-            Uint64(u64::MAX).checked_rem(Uint64(0)),
+            Uint64::MAX.checked_rem(Uint64(0)),
             Err(DivideByZeroError { .. })
         ));
+        assert!(matches!(Uint64(7).checked_rem(Uint64(2)), Ok(Uint64(1))));
 
         // saturating_*
-        assert_eq!(Uint64(u64::MAX).saturating_add(Uint64(1)), Uint64(u64::MAX));
+        assert_eq!(Uint64::MAX.saturating_add(Uint64(1)), Uint64::MAX);
         assert_eq!(Uint64(0).saturating_sub(Uint64(1)), Uint64(0));
-        assert_eq!(Uint64(u64::MAX).saturating_mul(Uint64(2)), Uint64(u64::MAX));
-        assert_eq!(Uint64(u64::MAX).saturating_pow(2), Uint64(u64::MAX));
+        assert_eq!(Uint64::MAX.saturating_mul(Uint64(2)), Uint64::MAX);
+        assert_eq!(Uint64::MAX.saturating_pow(2), Uint64::MAX);
 
         // wrapping_*
-        assert_eq!(Uint64(u64::MAX).wrapping_add(Uint64(1)), Uint64(0));
-        assert_eq!(Uint64(0).wrapping_sub(Uint64(1)), Uint64(u64::MAX));
+        assert_eq!(Uint64::MAX.wrapping_add(Uint64(1)), Uint64(0));
+        assert_eq!(Uint64(0).wrapping_sub(Uint64(1)), Uint64::MAX);
+        assert_eq!(Uint64::MAX.wrapping_mul(Uint64(2)), Uint64(u64::MAX - 1));
+        assert_eq!(Uint64::MAX.wrapping_pow(2), Uint64(1));
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint64_implements_rem() {
+        let a = Uint64::new(10);
+        assert_eq!(a % Uint64::new(10), Uint64::zero());
+        assert_eq!(a % Uint64::new(2), Uint64::zero());
+        assert_eq!(a % Uint64::new(1), Uint64::zero());
+        assert_eq!(a % Uint64::new(3), Uint64::new(1));
+        assert_eq!(a % Uint64::new(4), Uint64::new(2));
+
+        // works for refs
+        let a = Uint64::new(10);
+        let b = Uint64::new(3);
+        let expected = Uint64::new(1);
+        assert_eq!(a % b, expected);
+        assert_eq!(a % &b, expected);
+        assert_eq!(&a % b, expected);
+        assert_eq!(&a % &b, expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "divisor of zero")]
+    fn uint64_rem_panics_for_zero() {
+        let _ = Uint64::new(10) % Uint64::zero();
+    }
+
+    #[test]
+    #[allow(clippy::op_ref)]
+    fn uint64_rem_works() {
         assert_eq!(
-            Uint64(u64::MAX).wrapping_mul(Uint64(2)),
-            Uint64(u64::MAX - 1)
+            Uint64::from(12u32) % Uint64::from(10u32),
+            Uint64::from(2u32)
         );
-        assert_eq!(Uint64(u64::MAX).wrapping_pow(2), Uint64(1));
+        assert_eq!(Uint64::from(50u32) % Uint64::from(5u32), Uint64::zero());
+
+        // works for refs
+        let a = Uint64::from(42u32);
+        let b = Uint64::from(5u32);
+        let expected = Uint64::from(2u32);
+        assert_eq!(a % b, expected);
+        assert_eq!(a % &b, expected);
+        assert_eq!(&a % b, expected);
+        assert_eq!(&a % &b, expected);
+    }
+
+    #[test]
+    fn uint64_rem_assign_works() {
+        let mut a = Uint64::from(30u32);
+        a %= Uint64::from(4u32);
+        assert_eq!(a, Uint64::from(2u32));
+
+        // works for refs
+        let mut a = Uint64::from(25u32);
+        let b = Uint64::from(6u32);
+        a %= &b;
+        assert_eq!(a, Uint64::from(1u32));
     }
 }
